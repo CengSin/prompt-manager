@@ -1,0 +1,117 @@
+{{define "top"}}<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>{{.Title}}</title>
+<style>
+body {
+  margin: 0;
+  background: #f6f5f3;
+  color: #1f1d1a;
+  font: 17px/1.55 ui-sans-serif, system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
+}
+header, main {
+  width: min(40rem, calc(100% - 2.5rem));
+  margin: 0 auto;
+}
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 1.5rem 0 0.5rem;
+}
+header a {
+  color: inherit;
+  text-decoration: none;
+}
+h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+main {
+  padding-bottom: 4rem;
+}
+form.search, form.editor, form.confirm {
+  display: grid;
+  gap: 0.75rem;
+}
+form.search {
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  margin: 1rem 0 1.5rem;
+}
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+input, textarea, button {
+  font: inherit;
+}
+input, textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d6d3d1;
+  border-radius: 0.4rem;
+  background: #fff;
+  padding: 0.55rem 0.7rem;
+}
+textarea, pre.body {
+  font: 15px/1.6 ui-monospace, "SFMono-Regular", "Source Han Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+textarea {
+  min-height: 18rem;
+}
+button, .actions a {
+  border-radius: 0.4rem;
+  padding: 0.45rem 0.8rem;
+}
+button {
+  border: 0;
+  background: #1f1d1a;
+  color: #fff;
+  cursor: pointer;
+}
+a {
+  color: #1d4ed8;
+}
+.actions {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  margin-top: 1.25rem;
+}
+article {
+  padding: 0.9rem 0;
+  border-top: 1px solid #e7e5e4;
+}
+article p {
+  margin: 0.35rem 0 0;
+  overflow-wrap: anywhere;
+}
+.empty {
+  color: #57534e;
+}
+@media (max-width: 40rem) {
+  form.search {
+    grid-template-columns: 1fr;
+  }
+}
+.error {
+  color: #9f1239;
+  margin: 0;
+}
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="/">提示词</a></h1>
+  <a href="/prompts/new">贴上一条</a>
+</header>
+<main>
+{{end}}

@@ -1,0 +1,16 @@
+{{define "list"}}{{template "top" .}}
+<form class="search" method="get" action="/">
+  <label>搜索
+    <input id="q" name="q" value="{{.Query}}">
+  </label>
+  <button type="submit">搜索</button>
+</form>
+{{if .Empty}}<p class="empty">还没有提示词</p>{{end}}
+{{if .NoMatch}}<p class="empty">没有匹配的提示词</p>{{end}}
+{{range .Prompts}}
+<article>
+  <a href="/prompts/{{.ID}}">{{.Excerpt}}</a>
+  {{if .ExampleURL}}<p><a href="{{.ExampleURL}}" target="_blank" rel="noopener noreferrer">{{.ExampleURL}}</a></p>{{end}}
+</article>
+{{end}}
+{{template "bottom" .}}{{end}}

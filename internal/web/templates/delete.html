@@ -1,0 +1,10 @@
+{{define "delete"}}{{template "top" .}}
+<p>删除后无法恢复。</p>
+<pre class="body">{{.Excerpt}}</pre>
+<form class="confirm" method="post" action="/prompts/{{.ID}}/delete">
+  <div class="actions">
+    <button type="submit">确认删除</button>
+    <a href="/prompts/{{.ID}}">取消</a>
+  </div>
+</form>
+{{template "bottom" .}}{{end}}

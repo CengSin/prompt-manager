@@ -1,0 +1,15 @@
+{{define "form"}}{{template "top" .}}
+<form class="editor" method="post" action="{{.Action}}">
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <label>原文
+    <textarea name="body">{{.Body}}</textarea>
+  </label>
+  <label>示例链接
+    <input name="example_url" value="{{.ExampleURL}}">
+  </label>
+  <div class="actions">
+    <button type="submit">保存</button>
+    {{if .CancelURL}}<a href="{{.CancelURL}}">取消</a>{{end}}
+  </div>
+</form>
+{{template "bottom" .}}{{end}}
