@@ -348,7 +348,7 @@ func TestSearchHighlightAndMeaning(t *testing.T) {
 	}
 
 	_, listed := getPath(t, client, ts.URL+"/?q="+url.QueryEscape("海滩"))
-	if strings.Contains(listed, "意思相近") || strings.Contains(listed, strings.Repeat("甲", 200)) || !strings.Contains(listed, "<mark>海滩</mark>") {
+	if !strings.Contains(listed, "意思相近") || strings.Contains(listed, strings.Repeat("甲", 200)) || !strings.Contains(listed, "<mark>海滩</mark>") {
 		t.Fatalf("beach list: %s", listed)
 	}
 	if !strings.Contains(listed, "/prompts/"+beach.ID+"?q=") {
@@ -409,6 +409,56 @@ func TestSearchHighlightAndMeaning(t *testing.T) {
 	assertLiteral(t, scriptPage)
 	if !strings.Contains(scriptPage, "<mark>海滩</mark>") {
 		t.Fatalf("script page missing highlight: %s", scriptPage)
+	}
+}
+
+func TestMixedLanguageSearchResultsAndOriginalHighlights(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "prompts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	app := New(st, &fakeDeriver{embedReady: true, vector: []float32{1, 0}, model: "m"})
+	app.SetLimits(0.5, 1)
+	ts := httptest.NewServer(app)
+	t.Cleanup(ts.Close)
+	client := ts.Client()
+
+	query := "雨夜霓虹街道"
+	literal, err := st.Create(query, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitDerived(literal.ID, literal.Generation, derive.Result{Vectors: []derive.Vector{{
+		Source: "section", End: len(query), Model: "m", Values: []float32{1, 0},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	foreignBody := "A neon-lit street in the rain <script>alert(1)</script>"
+	foreign, err := st.Create(foreignBody, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitDerived(foreign.ID, foreign.Generation, derive.Result{Vectors: []derive.Vector{{
+		Source: "section", End: len(foreignBody), Model: "m", Values: []float32{1, 0},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, page := getPath(t, client, ts.URL+"/?q="+url.QueryEscape(query))
+	literalAt := strings.Index(page, "<mark>"+query+"</mark>")
+	foreignAt := strings.Index(page, "A neon-lit street")
+	if literalAt < 0 || foreignAt < 0 || literalAt > foreignAt || !strings.Contains(page, "意思相近") {
+		t.Fatalf("mixed result order: %s", page)
+	}
+	if strings.Count(page, "/prompts/"+literal.ID+"?q=") != 1 || strings.Count(page, "/prompts/"+foreign.ID+"?q=") != 1 {
+		t.Fatalf("duplicate or missing result: %s", page)
+	}
+	assertLiteral(t, page)
+	_, detail := getPath(t, client, ts.URL+"/prompts/"+foreign.ID+"?q="+url.QueryEscape(query))
+	assertLiteral(t, detail)
+	if !strings.Contains(detail, "<mark>A neon-lit street in the rain &lt;script&gt;alert(1)&lt;/script&gt;</mark>") || strings.Contains(detail, "<mark>"+query+"</mark>") {
+		t.Fatalf("foreign original highlight: %s", detail)
 	}
 }
 

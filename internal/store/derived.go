@@ -295,18 +295,28 @@ func (s *Store) Match(query string, cfg MatchConfig) (Match, error) {
 		return Match{Literal: hits}, nil
 	}
 	literal := search.Literal(docs, query)
-	if len(literal) > 0 {
-		return Match{Literal: attach(prompts, literal)}, nil
-	}
+	match := Match{Literal: attach(prompts, literal)}
 	if cfg.Embed == nil || cfg.Limit <= 0 {
-		return Match{}, nil
+		return match, nil
 	}
 	vec, model, err := cfg.Embed(query)
 	if err != nil || len(vec) == 0 {
-		return Match{}, nil
+		return match, nil
 	}
-	meaning := search.Meaning(docs, vec, model, cfg.Min, cfg.Limit)
-	return Match{Meaning: attach(prompts, meaning)}, nil
+	literalIDs := make(map[string]struct{}, len(match.Literal))
+	for _, hit := range match.Literal {
+		literalIDs[hit.Prompt.ID] = struct{}{}
+	}
+	for _, hit := range attach(prompts, search.Meaning(docs, vec, model, cfg.Min, len(docs))) {
+		if _, exists := literalIDs[hit.Prompt.ID]; exists {
+			continue
+		}
+		match.Meaning = append(match.Meaning, hit)
+		if len(match.Meaning) == cfg.Limit {
+			break
+		}
+	}
+	return match, nil
 }
 
 func attach(prompts []Prompt, hits []search.Hit) []Hit {

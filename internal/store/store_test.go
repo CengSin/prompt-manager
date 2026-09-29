@@ -474,8 +474,73 @@ func TestLiteralAndMeaningSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(literal.Literal) == 0 || len(literal.Meaning) != 0 {
-		t.Fatalf("literal suppressed meaning: %#v %#v", idsOf(literal.Literal), idsOf(literal.Meaning))
+	if len(literal.Literal) == 0 || len(literal.Meaning) == 0 || literal.Meaning[0].Prompt.ID != high.ID {
+		t.Fatalf("literal and meaning: %#v %#v", idsOf(literal.Literal), idsOf(literal.Meaning))
+	}
+}
+
+func TestLiteralSearchSurvivesEmbeddingFailure(t *testing.T) {
+	s := openTestStore(t)
+	item, err := s.Create("海滩日落", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, embed := range []EmbedFunc{
+		nil,
+		func(string) ([]float32, string, error) { return nil, "", errors.New("embedding unavailable") },
+	} {
+		match, err := s.Match("海滩", MatchConfig{Min: 0.35, Limit: 5, Embed: embed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(match.Literal) != 1 || match.Literal[0].Prompt.ID != item.ID || len(match.Meaning) != 0 {
+			t.Fatalf("failed embedding changed literal hits: %#v", match)
+		}
+	}
+}
+
+func TestMeaningCapAfterLiteralDedup(t *testing.T) {
+	s := openTestStore(t)
+	create := func(body string, values []float32) Prompt {
+		t.Helper()
+		item, err := s.Create(body, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CommitDerived(item.ID, item.Generation, derive.Result{Vectors: []derive.Vector{{
+			Source: "section", End: len(body), Model: "m", Values: values,
+		}}}); err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	literal := create("霓虹街道", []float32{1, 0})
+	first := create("A neon-lit street at night", []float32{0.9, 0.1})
+	second := create("Une rue éclairée au néon", []float32{0.8, 0.2})
+	create("桜が咲く川辺", []float32{0, 1})
+	calls := 0
+	query := "霓虹街道"
+	match, err := s.Match(query, MatchConfig{
+		Min: 0.5, Limit: 2,
+		Embed: func(text string) ([]float32, string, error) {
+			calls++
+			if text != query {
+				t.Fatalf("embedded query %q", text)
+			}
+			return []float32{1, 0}, "m", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(match.Literal) != 1 || match.Literal[0].Prompt.ID != literal.ID {
+		t.Fatalf("literal hits or embedding calls: %d %#v", calls, idsOf(match.Literal))
+	}
+	if len(match.Meaning) != 2 || match.Meaning[0].Prompt.ID != first.ID || match.Meaning[1].Prompt.ID != second.ID {
+		t.Fatalf("meaning after dedup: %#v", idsOf(match.Meaning))
+	}
+	if match.Meaning[0].Score <= match.Meaning[1].Score {
+		t.Fatalf("meaning score order: %v <= %v", match.Meaning[0].Score, match.Meaning[1].Score)
 	}
 }
 
