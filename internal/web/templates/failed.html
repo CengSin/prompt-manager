@@ -1,0 +1,18 @@
+{{define "failed"}}{{template "top" .}}
+{{if .Working}}<p class="empty">正在重跑，这一页会自动更新。</p>{{else if .Empty}}<p class="empty">没有处理失败</p>{{end}}
+{{if .Items}}
+<form method="post" action="/prompts/failed/retry">
+  <button type="submit">全部重跑</button>
+</form>
+{{end}}
+{{range .Items}}
+<article>
+  <a href="/prompts/{{.ID}}">{{.Excerpt}}</a>
+  <p>{{.Reason}}</p>
+  <p>{{.When}}</p>
+  <form method="post" action="/prompts/{{.ID}}/derive">
+    <button type="submit">重跑</button>
+  </form>
+</article>
+{{end}}
+{{template "bottom" .}}{{end}}

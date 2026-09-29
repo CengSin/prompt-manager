@@ -1,15 +1,19 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"errors"
+	"html"
 	"html/template"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
+	"prompt-manager/internal/derive"
 	"prompt-manager/internal/prompt"
 	"prompt-manager/internal/store"
 )
@@ -25,43 +29,172 @@ func ListenAddr(port string) string {
 }
 
 func NewHandler(st *store.Store) http.Handler {
-	h := &handler{
-		store: st,
-		tmpl:  template.Must(template.ParseFS(templateFiles, "templates/*.html")),
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", h.list)
-	mux.HandleFunc("GET /prompts/new", h.newForm)
-	mux.HandleFunc("POST /prompts", h.guard(h.create))
-	mux.HandleFunc("GET /prompts/{id}", h.detail)
-	mux.HandleFunc("GET /prompts/{id}/edit", h.editForm)
-	mux.HandleFunc("POST /prompts/{id}", h.guard(h.update))
-	mux.HandleFunc("GET /prompts/{id}/delete", h.deleteConfirm)
-	mux.HandleFunc("POST /prompts/{id}/delete", h.guard(h.delete))
-	return mux
+	return New(st, nil)
 }
 
-type handler struct {
-	store *store.Store
-	tmpl  *template.Template
+func New(st *store.Store, deriver Deriver) *App {
+	ctx, cancel := context.WithCancel(context.Background())
+	app := &App{
+		store:   st,
+		tmpl:    template.Must(template.ParseFS(templateFiles, "templates/*.html")),
+		deriver: deriver,
+		jobs:    make(chan job),
+		ctx:     ctx,
+		cancel:  cancel,
+		min:     0.35,
+		limit:   5,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", app.list)
+	mux.HandleFunc("GET /prompts/new", app.newForm)
+	mux.HandleFunc("POST /prompts", app.guard(app.create))
+	mux.HandleFunc("GET /prompts/failed", app.failed)
+	mux.HandleFunc("POST /prompts/failed/retry", app.guard(app.retryAll))
+	mux.HandleFunc("GET /prompts/{id}", app.detail)
+	mux.HandleFunc("GET /prompts/{id}/edit", app.editForm)
+	mux.HandleFunc("POST /prompts/{id}", app.guard(app.update))
+	mux.HandleFunc("POST /prompts/{id}/derive", app.guard(app.retryOne))
+	mux.HandleFunc("GET /prompts/{id}/delete", app.deleteConfirm)
+	mux.HandleFunc("POST /prompts/{id}/delete", app.guard(app.delete))
+	app.mux = mux
+	return app
+}
+
+type Deriver interface {
+	Ready() bool
+	EmbedReady() bool
+	Derive(ctx context.Context, body string) (derive.Result, error)
+	EmbedQuery(ctx context.Context, text string) ([]float32, string, error)
+	Redact(reason string) string
+}
+
+type job struct {
+	id  string
+	gen int
+}
+
+type App struct {
+	store   *store.Store
+	tmpl    *template.Template
+	deriver Deriver
+	jobs    chan job
+	ctx     context.Context
+	cancel  context.CancelFunc
+	mux     *http.ServeMux
+	min     float64
+	limit   int
+}
+
+func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.mux.ServeHTTP(w, r)
+}
+
+func (a *App) Start() {
+	if a.deriver == nil {
+		return
+	}
+	go a.loop()
+}
+
+func (a *App) Stop() {
+	a.cancel()
+}
+
+func (a *App) Backfill() {
+	if a.deriver == nil || !a.deriver.Ready() {
+		return
+	}
+	items, err := a.store.ListUnprocessed()
+	if err != nil {
+		log.Printf("backfill: %v", err)
+		return
+	}
+	for _, item := range items {
+		a.enqueue(item.ID)
+	}
+}
+
+func (a *App) SetLimits(min float64, limit int) {
+	a.min = min
+	a.limit = limit
+}
+
+func (a *App) loop() {
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case job := <-a.jobs:
+			a.run(job)
+		}
+	}
+}
+
+func (a *App) enqueue(id string) {
+	if a.deriver == nil || !a.deriver.Ready() {
+		return
+	}
+	item, err := a.store.Get(id)
+	if err != nil {
+		return
+	}
+	if err := a.store.MarkPending(id, item.Generation); err != nil {
+		return
+	}
+	gen := item.Generation
+	go func() {
+		select {
+		case a.jobs <- job{id: id, gen: gen}:
+		case <-a.ctx.Done():
+		}
+	}()
+}
+
+func (a *App) run(job job) {
+	item, err := a.store.Get(job.id)
+	if err != nil || item.Generation != job.gen {
+		return
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 90*time.Second)
+	defer cancel()
+	result, err := a.deriver.Derive(ctx, item.Body)
+	if errors.Is(err, derive.ErrNotConfigured) {
+		_ = a.store.MarkIdle(job.id, job.gen)
+		return
+	}
+	if err != nil {
+		reason := a.deriver.Redact(err.Error())
+		log.Printf("derive %s: %s", job.id, reason)
+		if markErr := a.store.MarkFailed(job.id, job.gen, reason); markErr != nil {
+			log.Printf("derive %s mark failed: %v", job.id, markErr)
+		}
+		return
+	}
+	if err := a.store.CommitDerived(job.id, job.gen, result); err != nil && !errors.Is(err, store.ErrStale) {
+		log.Printf("save derived data: %v", err)
+	}
 }
 
 type listItem struct {
 	ID         string
-	Excerpt    string
+	Excerpt    template.HTML
 	ExampleURL string
 }
 
 type listPage struct {
-	Title   string
-	Query   string
-	Prompts []listItem
-	Empty   bool
-	NoMatch bool
+	Title       string
+	Refresh     int
+	Query       string
+	Prompts     []listItem
+	Meaning     []listItem
+	FailedCount int
+	Empty       bool
+	NoMatch     bool
 }
 
 type formPage struct {
 	Title      string
+	Refresh    int
 	Action     string
 	Body       string
 	ExampleURL string
@@ -71,61 +204,103 @@ type formPage struct {
 
 type detailPage struct {
 	Title      string
+	Refresh    int
 	ID         string
-	Body       string
+	Body       template.HTML
 	ExampleURL string
+}
+
+type failedItem struct {
+	ID      string
+	Excerpt string
+	Reason  string
+	When    string
+}
+
+type failedPage struct {
+	Title   string
+	Refresh int
+	Empty   bool
+	Working bool
+	Items   []failedItem
 }
 
 type deletePage struct {
 	Title   string
+	Refresh int
 	ID      string
 	Excerpt string
 }
 
 type messagePage struct {
 	Title   string
+	Refresh int
 	Message string
 }
 
-func (h *handler) list(w http.ResponseWriter, r *http.Request) {
+func (a *App) list(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
-	items, err := h.store.Search(query)
+	page := listPage{Title: "提示词", Query: query}
+	var err error
+	page.FailedCount, err = a.store.CountFailed()
 	if err != nil {
-		h.fail(w, err)
+		a.fail(w, err)
 		return
 	}
-	page := listPage{Title: "提示词", Query: query}
-	for _, item := range items {
+	if strings.TrimSpace(query) == "" {
+		items, err := a.store.List()
+		if err != nil {
+			a.fail(w, err)
+			return
+		}
+		for _, item := range items {
+			page.Prompts = append(page.Prompts, listItem{
+				ID:         item.ID,
+				Excerpt:    template.HTML(html.EscapeString(prompt.Excerpt(item.Body))),
+				ExampleURL: item.ExampleURL,
+			})
+		}
+		page.Empty = len(items) == 0
+		a.render(w, http.StatusOK, "list", page)
+		return
+	}
+	match, err := a.match(r.Context(), query)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	for _, hit := range match.Literal {
 		page.Prompts = append(page.Prompts, listItem{
-			ID:         item.ID,
-			Excerpt:    prompt.Excerpt(item.Body),
-			ExampleURL: item.ExampleURL,
+			ID:         hit.Prompt.ID,
+			Excerpt:    excerptHTML(hit.Prompt.Body, hit.Spans),
+			ExampleURL: hit.Prompt.ExampleURL,
 		})
 	}
-	if len(items) == 0 {
-		if strings.TrimSpace(query) == "" {
-			page.Empty = true
-		} else {
-			page.NoMatch = true
-		}
+	for _, hit := range match.Meaning {
+		page.Meaning = append(page.Meaning, listItem{
+			ID:         hit.Prompt.ID,
+			Excerpt:    excerptHTML(hit.Prompt.Body, hit.Spans),
+			ExampleURL: hit.Prompt.ExampleURL,
+		})
 	}
-	h.render(w, http.StatusOK, "list", page)
+	page.NoMatch = len(page.Prompts) == 0 && len(page.Meaning) == 0
+	a.render(w, http.StatusOK, "list", page)
 }
 
-func (h *handler) newForm(w http.ResponseWriter, r *http.Request) {
-	h.render(w, http.StatusOK, "form", formPage{
+func (a *App) newForm(w http.ResponseWriter, r *http.Request) {
+	a.render(w, http.StatusOK, "form", formPage{
 		Title:     "贴上提示词",
 		Action:    "/prompts",
 		CancelURL: "/",
 	})
 }
 
-func (h *handler) create(w http.ResponseWriter, r *http.Request) {
+func (a *App) create(w http.ResponseWriter, r *http.Request) {
 	body, exampleURL := readPromptForm(r)
-	item, err := h.store.Create(body, exampleURL)
+	item, err := a.store.Create(body, exampleURL)
 	if err != nil {
 		if formErr(err) {
-			h.render(w, http.StatusBadRequest, "form", formPage{
+			a.render(w, http.StatusBadRequest, "form", formPage{
 				Title:      "贴上提示词",
 				Action:     "/prompts",
 				Body:       body,
@@ -135,31 +310,47 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		h.fail(w, err)
+		a.fail(w, err)
 		return
 	}
+	a.enqueue(item.ID)
 	http.Redirect(w, r, "/prompts/"+item.ID, http.StatusSeeOther)
 }
 
-func (h *handler) detail(w http.ResponseWriter, r *http.Request) {
-	item, ok := h.load(w, r.PathValue("id"))
+func (a *App) detail(w http.ResponseWriter, r *http.Request) {
+	item, ok := a.load(w, r.PathValue("id"))
 	if !ok {
 		return
 	}
-	h.render(w, http.StatusOK, "detail", detailPage{
+	query := r.URL.Query().Get("q")
+	body := template.HTML(html.EscapeString(item.Body))
+	if strings.TrimSpace(query) != "" {
+		match, err := a.match(r.Context(), query)
+		if err != nil {
+			a.fail(w, err)
+			return
+		}
+		for _, hit := range append(match.Literal, match.Meaning...) {
+			if hit.Prompt.ID == item.ID && len(hit.Spans) > 0 {
+				body = markHTML(item.Body, hit.Spans)
+				break
+			}
+		}
+	}
+	a.render(w, http.StatusOK, "detail", detailPage{
 		Title:      "提示词",
 		ID:         item.ID,
-		Body:       item.Body,
+		Body:       body,
 		ExampleURL: item.ExampleURL,
 	})
 }
 
-func (h *handler) editForm(w http.ResponseWriter, r *http.Request) {
-	item, ok := h.load(w, r.PathValue("id"))
+func (a *App) editForm(w http.ResponseWriter, r *http.Request) {
+	item, ok := a.load(w, r.PathValue("id"))
 	if !ok {
 		return
 	}
-	h.render(w, http.StatusOK, "form", formPage{
+	a.render(w, http.StatusOK, "form", formPage{
 		Title:      "改正提示词",
 		Action:     "/prompts/" + item.ID,
 		Body:       item.Body,
@@ -168,17 +359,26 @@ func (h *handler) editForm(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *handler) update(w http.ResponseWriter, r *http.Request) {
+func (a *App) update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	body, exampleURL := readPromptForm(r)
-	item, err := h.store.Update(id, body, exampleURL)
+	current, err := a.store.Get(id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			h.notFound(w)
+			a.notFound(w)
+			return
+		}
+		a.fail(w, err)
+		return
+	}
+	body, exampleURL := readPromptForm(r)
+	item, err := a.store.Update(id, body, exampleURL)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			a.notFound(w)
 			return
 		}
 		if formErr(err) {
-			h.render(w, http.StatusBadRequest, "form", formPage{
+			a.render(w, http.StatusBadRequest, "form", formPage{
 				Title:      "改正提示词",
 				Action:     "/prompts/" + id,
 				Body:       body,
@@ -188,71 +388,144 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		h.fail(w, err)
+		a.fail(w, err)
 		return
+	}
+	if current.Body != item.Body {
+		a.enqueue(item.ID)
 	}
 	http.Redirect(w, r, "/prompts/"+item.ID, http.StatusSeeOther)
 }
 
-func (h *handler) deleteConfirm(w http.ResponseWriter, r *http.Request) {
-	item, ok := h.load(w, r.PathValue("id"))
+func (a *App) deleteConfirm(w http.ResponseWriter, r *http.Request) {
+	item, ok := a.load(w, r.PathValue("id"))
 	if !ok {
 		return
 	}
-	h.render(w, http.StatusOK, "delete", deletePage{
+	a.render(w, http.StatusOK, "delete", deletePage{
 		Title:   "删除提示词",
 		ID:      item.ID,
 		Excerpt: prompt.Excerpt(item.Body),
 	})
 }
 
-func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
+func (a *App) delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := h.store.Delete(id); err != nil {
+	if err := a.store.Delete(id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			h.notFound(w)
+			a.notFound(w)
 			return
 		}
-		h.fail(w, err)
+		a.fail(w, err)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (h *handler) load(w http.ResponseWriter, id string) (store.Prompt, bool) {
-	item, err := h.store.Get(id)
+func (a *App) failed(w http.ResponseWriter, r *http.Request) {
+	items, err := a.store.ListFailed()
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	pending, err := a.store.CountPending()
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	page := failedPage{Title: "处理失败", Empty: len(items) == 0, Working: pending > 0}
+	if pending > 0 {
+		page.Refresh = 2
+	}
+	for _, item := range items {
+		page.Items = append(page.Items, failedItem{
+			ID:      item.ID,
+			Excerpt: prompt.Excerpt(item.Body),
+			Reason:  item.Reason,
+			When:    item.FailedAt.UTC().Format("2006-01-02 15:04:05"),
+		})
+	}
+	a.render(w, http.StatusOK, "failed", page)
+}
+
+func (a *App) retryOne(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	item, err := a.store.Get(id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			a.notFound(w)
+			return
+		}
+		a.fail(w, err)
+		return
+	}
+	if item.Status == store.StatusFailed && a.deriver != nil && a.deriver.Ready() {
+		a.enqueue(id)
+	}
+	http.Redirect(w, r, "/prompts/failed", http.StatusSeeOther)
+}
+
+func (a *App) retryAll(w http.ResponseWriter, r *http.Request) {
+	if a.deriver != nil && a.deriver.Ready() {
+		items, err := a.store.ListFailed()
+		if err != nil {
+			a.fail(w, err)
+			return
+		}
+		for _, item := range items {
+			a.enqueue(item.ID)
+		}
+	}
+	http.Redirect(w, r, "/prompts/failed", http.StatusSeeOther)
+}
+
+func (a *App) match(ctx context.Context, query string) (store.Match, error) {
+	return a.store.Match(query, store.MatchConfig{
+		Min:   a.min,
+		Limit: a.limit,
+		Embed: func(text string) ([]float32, string, error) {
+			if a.deriver == nil || !a.deriver.EmbedReady() {
+				return nil, "", derive.ErrNotConfigured
+			}
+			return a.deriver.EmbedQuery(ctx, text)
+		},
+	})
+}
+
+func (a *App) load(w http.ResponseWriter, id string) (store.Prompt, bool) {
+	item, err := a.store.Get(id)
 	if errors.Is(err, store.ErrNotFound) {
-		h.notFound(w)
+		a.notFound(w)
 		return store.Prompt{}, false
 	}
 	if err != nil {
-		h.fail(w, err)
+		a.fail(w, err)
 		return store.Prompt{}, false
 	}
 	return item, true
 }
 
-func (h *handler) notFound(w http.ResponseWriter) {
-	h.render(w, http.StatusNotFound, "message", messagePage{
+func (a *App) notFound(w http.ResponseWriter) {
+	a.render(w, http.StatusNotFound, "message", messagePage{
 		Title:   "未找到",
 		Message: "未找到这条提示词",
 	})
 }
 
-func (h *handler) fail(w http.ResponseWriter, err error) {
+func (a *App) fail(w http.ResponseWriter, err error) {
 	log.Printf("request failed: %v", err)
 	http.Error(w, "保存失败", http.StatusInternalServerError)
 }
 
-func (h *handler) render(w http.ResponseWriter, status int, name string, data any) {
+func (a *App) render(w http.ResponseWriter, status int, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	if err := h.tmpl.ExecuteTemplate(w, name, data); err != nil {
+	if err := a.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		log.Printf("render %s: %v", name, err)
 	}
 }
 
-func (h *handler) guard(next http.HandlerFunc) http.HandlerFunc {
+func (a *App) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
 			http.Error(w, "拒绝来自其他网站的提交", http.StatusForbidden)

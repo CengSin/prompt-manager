@@ -25,6 +25,8 @@ type Prompt struct {
 	ExampleURL string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	Generation int
+	Status     string
 }
 
 type Store struct {
@@ -43,14 +45,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS prompts (
-		id TEXT PRIMARY KEY,
-		body TEXT NOT NULL,
-		body_search TEXT NOT NULL,
-		example_url TEXT,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	)`); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -86,7 +81,7 @@ func (s *Store) Create(body, exampleURL string) (Prompt, error) {
 
 func (s *Store) Get(id string) (Prompt, error) {
 	row := s.db.QueryRow(
-		`SELECT id, body, example_url, created_at, updated_at FROM prompts WHERE id = ?`,
+		`SELECT id, body, example_url, created_at, updated_at, derive_generation, derive_status FROM prompts WHERE id = ?`,
 		id,
 	)
 	return scanPrompt(row)
@@ -97,25 +92,48 @@ func (s *Store) List() ([]Prompt, error) {
 }
 
 func (s *Store) Search(query string) ([]Prompt, error) {
-	trimmed := strings.TrimSpace(query)
-	if trimmed == "" {
+	if strings.TrimSpace(query) == "" {
 		return s.List()
 	}
-	return s.query(`WHERE instr(body_search, ?) > 0`, prompt.SearchText(trimmed))
+	match, err := s.Match(query, MatchConfig{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Prompt, len(match.Literal))
+	for i, hit := range match.Literal {
+		out[i] = hit.Prompt
+	}
+	return out, nil
 }
 
 func (s *Store) Update(id, body, exampleURL string) (Prompt, error) {
-	if _, err := s.Get(id); err != nil {
+	current, err := s.Get(id)
+	if err != nil {
 		return Prompt{}, err
 	}
 	draft, err := prompt.Validate(body, exampleURL)
 	if err != nil {
 		return Prompt{}, err
 	}
-	_, err = s.db.Exec(
-		`UPDATE prompts SET body = ?, body_search = ?, example_url = ?, updated_at = ? WHERE id = ?`,
-		draft.Body, draft.BodySearch, nullableURL(draft), formatTime(s.now()), id,
-	)
+	if current.Body == draft.Body {
+		_, err = s.db.Exec(
+			`UPDATE prompts SET example_url = ?, updated_at = ? WHERE id = ?`,
+			nullableURL(draft), formatTime(s.now()), id,
+		)
+		if err != nil {
+			return Prompt{}, err
+		}
+		return s.Get(id)
+	}
+	err = s.withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(
+			`UPDATE prompts SET body = ?, body_search = ?, example_url = ?, updated_at = ?, derive_generation = ?, derive_status = 'none', derive_error = NULL, derive_failed_at = NULL WHERE id = ?`,
+			draft.Body, draft.BodySearch, nullableURL(draft), formatTime(s.now()), current.Generation+1, id,
+		); err != nil {
+			return err
+		}
+		return deleteDerived(tx, id)
+	})
 	if err != nil {
 		return Prompt{}, err
 	}
@@ -123,23 +141,28 @@ func (s *Store) Update(id, body, exampleURL string) (Prompt, error) {
 }
 
 func (s *Store) Delete(id string) error {
-	result, err := s.db.Exec(`DELETE FROM prompts WHERE id = ?`, id)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.withTx(func(tx *sql.Tx) error {
+		if err := deleteDerived(tx, id); err != nil {
+			return err
+		}
+		result, err := tx.Exec(`DELETE FROM prompts WHERE id = ?`, id)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func (s *Store) query(where string, args ...any) ([]Prompt, error) {
 	rows, err := s.db.Query(
-		`SELECT id, body, example_url, created_at, updated_at FROM prompts `+where+` ORDER BY created_at DESC, id DESC`,
+		`SELECT id, body, example_url, created_at, updated_at, derive_generation, derive_status FROM prompts `+where+` ORDER BY created_at DESC, id DESC`,
 		args...,
 	)
 	if err != nil {
@@ -168,7 +191,7 @@ func scanPrompt(row scanner) (Prompt, error) {
 	var item Prompt
 	var example sql.NullString
 	var created, updated string
-	if err := row.Scan(&item.ID, &item.Body, &example, &created, &updated); err != nil {
+	if err := row.Scan(&item.ID, &item.Body, &example, &created, &updated, &item.Generation, &item.Status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Prompt{}, ErrNotFound
 		}

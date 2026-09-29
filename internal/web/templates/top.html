@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{{if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">{{end}}
 <link rel="icon" href="data:,">
 <title>{{.Title}}</title>
 <style>
@@ -96,6 +97,14 @@ article p {
 }
 .empty {
   color: #57534e;
+}
+mark {
+  background: #f3e3b0;
+  color: inherit;
+}
+h2 {
+  margin: 1.4rem 0 0.4rem;
+  font-size: 1rem;
 }
 @media (max-width: 40rem) {
   form.search {

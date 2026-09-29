@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +30,24 @@ func TestSettings(t *testing.T) {
 	addr, dbPath = settings(func(string) string { return "" })
 	if addr != "127.0.0.1:8787" || dbPath != "./data/prompts.db" {
 		t.Fatalf("default settings = %s %s", addr, dbPath)
+	}
+}
+
+func TestReadmeDocumentsModelConfig(t *testing.T) {
+	raw, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, needle := range []string{"./data/config.json", "baseUrl", "apiKey", "model", "similarityMin", "meaningLimit"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("readme missing %s", needle)
+		}
+	}
+	for _, banned := range []string{"XAI_API_KEY", "PROMPT_MANAGER_DERIVE_MODEL", "PROMPT_MANAGER_EMBED_API_KEY"} {
+		if strings.Contains(body, banned) {
+			t.Fatalf("readme contains %s", banned)
+		}
 	}
 }
 

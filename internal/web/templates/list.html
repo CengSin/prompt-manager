@@ -5,11 +5,19 @@
   </label>
   <button type="submit">搜索</button>
 </form>
+{{if .FailedCount}}<p><a href="/prompts/failed">{{.FailedCount}} 条处理失败</a></p>{{end}}
 {{if .Empty}}<p class="empty">还没有提示词</p>{{end}}
 {{if .NoMatch}}<p class="empty">没有匹配的提示词</p>{{end}}
 {{range .Prompts}}
 <article>
-  <a href="/prompts/{{.ID}}">{{.Excerpt}}</a>
+  <a href="/prompts/{{.ID}}{{if $.Query}}?q={{urlquery $.Query}}{{end}}">{{.Excerpt}}</a>
+  {{if .ExampleURL}}<p><a href="{{.ExampleURL}}" target="_blank" rel="noopener noreferrer">{{.ExampleURL}}</a></p>{{end}}
+</article>
+{{end}}
+{{if .Meaning}}<h2>意思相近</h2>{{end}}
+{{range .Meaning}}
+<article>
+  <a href="/prompts/{{.ID}}{{if $.Query}}?q={{urlquery $.Query}}{{end}}">{{.Excerpt}}</a>
   {{if .ExampleURL}}<p><a href="{{.ExampleURL}}" target="_blank" rel="noopener noreferrer">{{.ExampleURL}}</a></p>{{end}}
 </article>
 {{end}}

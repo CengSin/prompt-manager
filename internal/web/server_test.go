@@ -1,15 +1,21 @@
 package web
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"prompt-manager/internal/derive"
+	"prompt-manager/internal/prompt"
 	"prompt-manager/internal/store"
 )
 
@@ -173,7 +179,7 @@ func TestSearchPage(t *testing.T) {
 	})
 
 	_, chinese := getPath(t, client, ts.URL+"/?q="+url.QueryEscape("剪纸"))
-	if !strings.Contains(chinese, "剪纸 Paper-cut") || !strings.Contains(chinese, "另一条也有剪纸") {
+	if !strings.Contains(chinese, "<mark>剪纸</mark>") || !strings.Contains(chinese, "Paper-cut") || !strings.Contains(chinese, "另一条也有") {
 		t.Fatalf("chinese search: %s", chinese)
 	}
 	_, latin := getPath(t, client, ts.URL+"/?q=paper-cut")
@@ -282,7 +288,9 @@ func TestLiteralTextAndNoFetch(t *testing.T) {
 	_, found := getPath(t, client, ts.URL+"/?q=alert")
 	assertLiteral(t, detail)
 	assertLiteral(t, list)
-	assertLiteral(t, found)
+	if strings.Contains(strings.ToLower(found), "<script") || !strings.Contains(found, "&lt;script&gt;") || !strings.Contains(found, "&lt;/script&gt;") || !strings.Contains(found, "<mark>alert</mark>") {
+		t.Fatalf("highlighted script was not literal: %s", found)
+	}
 	if hits.Load() != 0 {
 		t.Fatalf("example URL was requested %d times", hits.Load())
 	}
@@ -292,6 +300,392 @@ func TestLiteralTextAndNoFetch(t *testing.T) {
 	if path == "" {
 		t.Fatal("missing detail path")
 	}
+}
+
+func TestSearchHighlightAndMeaning(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "prompts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	app := New(st, &fakeDeriver{embedReady: true, vector: []float32{1, 0}, model: "m"})
+	app.SetLimits(0.5, 5)
+	ts := httptest.NewServer(app)
+	t.Cleanup(ts.Close)
+	client := ts.Client()
+
+	body := strings.Repeat("甲", 200) + "海滩两次还有海滩"
+	beach, err := st.Create(body, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias, err := st.Create("喜欢剪纸风格", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitDerived(alias.ID, alias.Generation, derive.Result{Terms: []derive.Term{{
+		Kind: "style", Phrase: "剪纸风格", Start: len("喜欢"), End: len("喜欢剪纸风格"), Spellings: []string{"paper-cut"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	high, err := st.Create("高分段落", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	low, err := st.Create("低分段落", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitDerived(high.ID, high.Generation, derive.Result{Vectors: []derive.Vector{{
+		Source: "section", End: len("高分段落"), Model: "m", Values: []float32{1, 0},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitDerived(low.ID, low.Generation, derive.Result{Vectors: []derive.Vector{{
+		Source: "section", End: len("低分段落"), Model: "m", Values: []float32{0.6, 0.8},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, listed := getPath(t, client, ts.URL+"/?q="+url.QueryEscape("海滩"))
+	if strings.Contains(listed, "意思相近") || strings.Contains(listed, strings.Repeat("甲", 200)) || !strings.Contains(listed, "<mark>海滩</mark>") {
+		t.Fatalf("beach list: %s", listed)
+	}
+	if !strings.Contains(listed, "/prompts/"+beach.ID+"?q=") {
+		t.Fatalf("detail link missing query: %s", listed)
+	}
+	_, detail := getPath(t, client, ts.URL+"/prompts/"+beach.ID+"?q="+url.QueryEscape("海滩"))
+	if strings.Count(detail, "<mark>海滩</mark>") != 2 {
+		t.Fatalf("detail highlights: %s", detail)
+	}
+	_, plain := getPath(t, client, ts.URL+"/prompts/"+beach.ID)
+	if strings.Contains(plain, "<mark>") {
+		t.Fatalf("unfiltered detail highlighted: %s", plain)
+	}
+
+	_, aliasPage := getPath(t, client, ts.URL+"/prompts/"+alias.ID+"?q=paper-cut")
+	if !strings.Contains(aliasPage, "<mark>剪纸风格</mark>") || strings.Contains(aliasPage, "paper-cut") {
+		t.Fatalf("alias detail: %s", aliasPage)
+	}
+
+	_, meaning := getPath(t, client, ts.URL+"/?q="+url.QueryEscape("番茄炒蛋"))
+	highAt := strings.Index(meaning, "高分段落")
+	lowAt := strings.Index(meaning, "低分段落")
+	if !strings.Contains(meaning, "意思相近") || highAt < 0 || lowAt < 0 || highAt > lowAt {
+		t.Fatalf("meaning order: %s", meaning)
+	}
+	app.SetLimits(0.5, 1)
+	_, capped := getPath(t, client, ts.URL+"/?q="+url.QueryEscape("番茄炒蛋"))
+	if strings.Contains(capped, "低分段落") || !strings.Contains(capped, "高分段落") {
+		t.Fatalf("capped meaning: %s", capped)
+	}
+	sectionBody := "AAAA\n\nBBBB完整的一段"
+	sections := prompt.Sections(sectionBody)
+	if len(sections) != 2 {
+		t.Fatalf("sections = %#v", sections)
+	}
+	sectionPrompt, err := st.Create(sectionBody, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitDerived(sectionPrompt.ID, sectionPrompt.Generation, derive.Result{Vectors: []derive.Vector{
+		{Source: "section", Start: sections[0].Start, End: sections[0].End, Model: "m", Values: []float32{0, 1}},
+		{Source: "section", Start: sections[1].Start, End: sections[1].End, Model: "m", Values: []float32{1, 0}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	app.SetLimits(0.5, 5)
+	_, sectionPage := getPath(t, client, ts.URL+"/prompts/"+sectionPrompt.ID+"?q="+url.QueryEscape("番茄炒蛋"))
+	if !strings.Contains(sectionPage, "<mark>BBBB完整的一段</mark>") || strings.Contains(sectionPage, "<mark>AAAA</mark>") {
+		t.Fatalf("section highlight: %s", sectionPage)
+	}
+
+	raw := "<script>alert(1)</script> 海滩"
+	scripted, err := st.Create(raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, scriptPage := getPath(t, client, ts.URL+"/prompts/"+scripted.ID+"?q="+url.QueryEscape("海滩"))
+	assertLiteral(t, scriptPage)
+	if !strings.Contains(scriptPage, "<mark>海滩</mark>") {
+		t.Fatalf("script page missing highlight: %s", scriptPage)
+	}
+}
+
+func TestFailurePageAndRetry(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "prompts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	idle := New(st, &fakeDeriver{})
+	ts := httptest.NewServer(idle)
+	client := ts.Client()
+	status, _, _ := postForm(t, client, ts.URL+"/prompts", ts.URL, "", url.Values{"body": {"尚未配置"}})
+	if status != http.StatusOK {
+		t.Fatalf("create status = %d", status)
+	}
+	got, err := st.List()
+	if err != nil || len(got) != 1 || got[0].Status != store.StatusNone {
+		t.Fatalf("unconfigured status = %#v err=%v", got, err)
+	}
+	_, failedPage := getPath(t, client, ts.URL+"/prompts/failed")
+	if !strings.Contains(failedPage, "没有处理失败") || strings.Contains(failedPage, "尚未配置") {
+		t.Fatalf("unconfigured failure page: %s", failedPage)
+	}
+	_, library := getPath(t, client, ts.URL+"/")
+	if strings.Contains(library, "处理失败") {
+		t.Fatalf("library linked failures: %s", library)
+	}
+	ts.Close()
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	blocked := &fakeDeriver{ready: true, embedReady: true, started: started, release: release, err: "token secret-key rejected"}
+	blocked.failLeft.Store(1)
+	app := New(st, blocked)
+	app.Start()
+	t.Cleanup(app.Stop)
+	ts = httptest.NewServer(app)
+	t.Cleanup(ts.Close)
+	client = ts.Client()
+	done := make(chan struct{})
+	go func() {
+		postForm(t, client, ts.URL+"/prompts", ts.URL, "", url.Values{"body": {"待处理的原文"}})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("save waited for derivation")
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("derivation did not start")
+	}
+	_, pending := getPath(t, client, ts.URL+"/prompts/failed")
+	if strings.Contains(pending, "待处理的原文") || !strings.Contains(pending, `http-equiv="refresh" content="2"`) {
+		t.Fatalf("pending page: %s", pending)
+	}
+	close(release)
+	waitFor(t, func() bool {
+		pageStatus, page := getPath(t, client, ts.URL+"/prompts/failed")
+		return pageStatus == http.StatusOK && strings.Contains(page, "待处理的原文") && strings.Contains(page, "token  rejected") && !strings.Contains(page, "secret-key")
+	})
+	_, library = getPath(t, client, ts.URL+"/")
+	if !strings.Contains(library, "1 条处理失败") {
+		t.Fatalf("library failure link: %s", library)
+	}
+
+	blocked.err = ""
+	blocked.release = nil
+	blocked.failLeft.Store(0)
+	status, _, _ = postForm(t, client, ts.URL+"/prompts/failed/retry", "https://evil.example", "", nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("cross-origin retry = %d", status)
+	}
+	status, path, _ := postForm(t, client, ts.URL+"/prompts/failed/retry", ts.URL, "", nil)
+	if status != http.StatusOK || path != "/prompts/failed" {
+		t.Fatalf("retry all status=%d path=%s", status, path)
+	}
+	waitFor(t, func() bool {
+		items, err := st.List()
+		if err != nil {
+			return false
+		}
+		for _, item := range items {
+			if strings.Contains(item.Body, "待处理") {
+				return item.Status == store.StatusReady
+			}
+		}
+		return false
+	})
+	_, page := getPath(t, client, ts.URL+"/prompts/failed")
+	if strings.Contains(page, "待处理的原文") {
+		t.Fatalf("successful retry still listed: %s", page)
+	}
+
+	again, err := st.Create("再失败一次", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkFailed(again.ID, again.Generation, "旧原因"); err != nil {
+		t.Fatal(err)
+	}
+	blocked.err = "新的失败"
+	blocked.failLeft.Store(1)
+	blocked.release = make(chan struct{})
+	status, _, page = postForm(t, client, ts.URL+"/prompts/"+again.ID+"/derive", ts.URL, "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("retry one status = %d", status)
+	}
+	if strings.Contains(page, "再失败一次") || !strings.Contains(page, `http-equiv="refresh" content="2"`) || !strings.Contains(page, "正在重跑") {
+		t.Fatalf("retry page did not stay open for the result: %s", page)
+	}
+	close(blocked.release)
+	waitFor(t, func() bool {
+		_, page = getPath(t, client, ts.URL+"/prompts/failed")
+		return strings.Contains(page, "新的失败") && strings.Contains(page, "再失败一次") && !strings.Contains(page, "旧原因") && strings.Contains(page, "2026") && !strings.Contains(page, "http-equiv=\"refresh\"")
+	})
+
+	if err := st.Delete(again.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, page = getPath(t, client, ts.URL+"/prompts/failed")
+	if strings.Contains(page, "再失败一次") {
+		t.Fatalf("deleted prompt still listed: %s", page)
+	}
+}
+
+type fakeDeriver struct {
+	ready      bool
+	embedReady bool
+	vector     []float32
+	model      string
+	err        string
+	failLeft   atomic.Int32
+	release    chan struct{}
+	started    chan struct{}
+	calls      atomic.Int32
+}
+
+func (f *fakeDeriver) Ready() bool      { return f.ready }
+func (f *fakeDeriver) EmbedReady() bool { return f.embedReady }
+
+func (f *fakeDeriver) Derive(ctx context.Context, body string) (derive.Result, error) {
+	if f.started != nil {
+		select {
+		case f.started <- struct{}{}:
+		default:
+		}
+	}
+	if f.release != nil {
+		select {
+		case <-f.release:
+		case <-ctx.Done():
+			return derive.Result{}, ctx.Err()
+		}
+	}
+	f.calls.Add(1)
+	if f.err != "" && f.failLeft.Add(-1) >= 0 {
+		return derive.Result{}, errors.New(f.err)
+	}
+	phrase := body
+	if idx := strings.Index(body, "待处理"); idx >= 0 {
+		phrase = "待处理"
+	}
+	return derive.Result{Terms: []derive.Term{{Kind: "keyword", Phrase: phrase, End: len(phrase)}}}, nil
+}
+
+func (f *fakeDeriver) EmbedQuery(context.Context, string) ([]float32, string, error) {
+	if !f.embedReady {
+		return nil, "", derive.ErrNotConfigured
+	}
+	return f.vector, f.model, nil
+}
+
+func (f *fakeDeriver) Redact(reason string) string {
+	return strings.ReplaceAll(reason, "secret-key", "")
+}
+
+func waitFor(t *testing.T, ready func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ready() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("condition not met")
+}
+
+func TestMissingTermModelStaysIdle(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "from-env")
+	t.Setenv("PROMPT_MANAGER_DERIVE_MODEL", "grok-4.7")
+	t.Setenv("PROMPT_MANAGER_EMBED_API_KEY", "from-env")
+	t.Setenv("PROMPT_MANAGER_EMBED_MODEL", "from-env")
+	hits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hits++
+	}))
+	t.Cleanup(upstream.Close)
+	path := filepath.Join(t.TempDir(), "config.json")
+	raw := `{
+		"term": {"baseUrl": "` + upstream.URL + `", "apiKey": "term-key"},
+		"embed": {"baseUrl": "` + upstream.URL + `", "apiKey": "embed-key", "model": "vendor/embed"}
+	}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := derive.LoadFile(path)
+	if cfg.Ready() {
+		t.Fatal("ready without term model")
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "prompts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	app := New(st, cfg)
+	app.Start()
+	t.Cleanup(app.Stop)
+	ts := httptest.NewServer(app)
+	t.Cleanup(ts.Close)
+	status, _, _ := postForm(t, ts.Client(), ts.URL+"/prompts", ts.URL, "", url.Values{"body": {"缺词模型的原文"}})
+	if status != http.StatusOK {
+		t.Fatalf("create status = %d", status)
+	}
+	got, err := st.List()
+	if err != nil || len(got) != 1 || got[0].Status != store.StatusNone {
+		t.Fatalf("status = %#v err=%v", got, err)
+	}
+	_, failedPage := getPath(t, ts.Client(), ts.URL+"/prompts/failed")
+	if strings.Contains(failedPage, "缺词模型的原文") {
+		t.Fatalf("missing model listed as failed: %s", failedPage)
+	}
+	if hits != 0 {
+		t.Fatalf("requests = %d", hits)
+	}
+}
+
+func TestBackfillSkipsFailures(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "prompts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	failed, err := st.Create("失败项", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkFailed(failed.ID, failed.Generation, "先失败"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Create("待补算的原文", ""); err != nil {
+		t.Fatal(err)
+	}
+	app := New(st, &fakeDeriver{ready: true, embedReady: true})
+	app.Start()
+	t.Cleanup(app.Stop)
+	app.Backfill()
+	waitFor(t, func() bool {
+		items, err := st.List()
+		if err != nil {
+			return false
+		}
+		var idleReady, failedStays bool
+		for _, item := range items {
+			if item.Body == "待补算的原文" && item.Status == store.StatusReady {
+				idleReady = true
+			}
+			if item.ID == failed.ID && item.Status == store.StatusFailed {
+				failedStays = true
+			}
+		}
+		return idleReady && failedStays
+	})
 }
 
 func assertLiteral(t *testing.T, page string) {

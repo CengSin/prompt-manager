@@ -1,47 +1,4 @@
-# prompt-library Specification
-
-## Purpose
-
-让用户把亲手贴入的提示词存进个人库，并为每条提示词保留一个可选的示例链接，以便之后按原文找回，并回看当初为什么收录它。
-
-## Requirements
-
-### Requirement: Store a pasted prompt
-The system SHALL store a prompt when the user submits text that contains at least one non-whitespace character. The system SHALL store that text unchanged, including line breaks, surrounding whitespace, and punctuation. The system SHALL NOT collect prompt text from a page, a post, or a URL on the user's behalf.
-
-#### Scenario: Save text without a link
-- **WHEN** the user submits prompt text that contains non-whitespace characters and leaves the example URL blank
-- **THEN** the system stores one prompt whose text is identical to the submission
-- **THEN** that prompt has no example URL
-
-#### Scenario: Reject empty text
-- **WHEN** the user submits prompt text that is empty or contains only whitespace
-- **THEN** the system does not store a prompt
-- **THEN** the system tells the user that the prompt text is required
-
-### Requirement: Keep one optional example URL
-The system SHALL keep at most one example URL on a prompt. The system SHALL treat an example URL that is empty or only whitespace as absent. The system SHALL accept an example URL only when it is an absolute `http` or `https` URL with a host. The system SHALL store an accepted URL unchanged apart from trimming surrounding whitespace.
-
-#### Scenario: Save a prompt with one example URL
-- **WHEN** the user submits valid prompt text and one absolute http or https example URL
-- **THEN** the system stores that URL on the same prompt as the text
-
-#### Scenario: Reject a URL that is not http or https
-- **WHEN** the user submits valid prompt text and an example URL that is not an absolute http or https URL with a host
-- **THEN** the system does not store a new prompt and does not change an existing prompt
-- **THEN** the system tells the user that the example URL must be an http or https link
-
-### Requirement: Open the example URL without fetching it
-When a prompt has an example URL, the system SHALL present that URL as a link the user can open in a browser. The system SHALL NOT fetch, preview, download, render, or check reachability of the example URL.
-
-#### Scenario: User opens the stored link
-- **WHEN** the user views a prompt that has an example URL
-- **THEN** the page offers that URL as a link whose target is the stored URL
-- **THEN** the system does not request that URL while saving, listing, searching, or viewing the prompt
-
-#### Scenario: Prompt has no example URL
-- **WHEN** the user views a prompt that has no example URL
-- **THEN** the page does not present an empty or broken link
+## MODIFIED Requirements
 
 ### Requirement: List saved prompts
 The system SHALL list saved prompts with the most recently created prompt first. Correcting a prompt SHALL NOT change its position in that order. Each list entry SHALL show an excerpt of the stored text and SHALL show the example URL when one is present. The excerpt SHALL NOT replace the stored text. On the unfiltered library list, the excerpt SHALL be a leading excerpt of the stored text. On a search result, the excerpt SHALL include the first highlighted match in the stored text. When no prompts are stored, the system SHALL show that the library is empty.
@@ -62,18 +19,6 @@ The system SHALL list saved prompts with the most recently created prompt first.
 - **WHEN** a search match occurs after the leading portion of a stored prompt
 - **THEN** that prompt's result excerpt includes the highlighted match
 - **THEN** the excerpt is not the complete stored text
-
-### Requirement: Read a saved prompt
-The system SHALL show the complete stored text when the user opens a prompt, together with its example URL when one is present. The system SHALL tell the user when the requested prompt does not exist.
-
-#### Scenario: Open a stored prompt
-- **WHEN** the user opens a prompt that is stored
-- **THEN** the page shows the complete stored text, identical to what was saved
-- **THEN** the page shows the example URL when the prompt has one
-
-#### Scenario: Open a missing prompt
-- **WHEN** the user opens a prompt that is not stored
-- **THEN** the system tells the user that the prompt was not found
 
 ### Requirement: Search the pasted text
 The system SHALL match a query that contains non-whitespace characters by splitting it on whitespace and ignoring empty pieces. A prompt SHALL be a literal match only when every piece occurs as a contiguous substring of that prompt's stored text, of one of its keywords, or of any spelling of one of its 气质词. Latin letters SHALL match regardless of case. Non-Latin text, including Chinese, SHALL match by exact substring. Search SHALL NOT use the example URL, user-managed categories, or user-managed tags as the match corpus. A query that is empty or only whitespace SHALL present the same list as the unfiltered library list. Literal matches SHALL keep the library list order.
@@ -142,34 +87,7 @@ The system SHALL present stored prompt text as literal text. Markup, scripts, an
 - **THEN** the page shows those characters as text
 - **THEN** the system does not execute the script
 
-### Requirement: Correct a saved prompt
-The system SHALL let the user replace the text and the example URL of an existing prompt, using the same text and URL rules as saving a new prompt. The system SHALL keep the prompt's identity. Clearing the example URL SHALL remove it. The system SHALL NOT create an additional prompt when the user corrects one.
-
-#### Scenario: Replace the text
-- **WHEN** the user corrects a stored prompt with new non-empty text
-- **THEN** the stored text becomes the corrected text
-- **THEN** the prompt keeps the same identity
-
-#### Scenario: Add or clear the example URL
-- **WHEN** the user adds an accepted example URL to a prompt that had none, or clears the example URL of a prompt that had one
-- **THEN** the prompt's example URL becomes the submitted value, with a blank value stored as absent
-
-#### Scenario: Reject a correction that empties the text
-- **WHEN** the user corrects a stored prompt with empty or whitespace-only text
-- **THEN** the system keeps the previous text and example URL
-- **THEN** the system tells the user that the prompt text is required
-
-### Requirement: Delete a saved prompt
-The system SHALL permanently remove a prompt only after the user confirms deletion. Canceling deletion SHALL leave the prompt unchanged. A removed prompt SHALL NOT appear in the list or in search, and opening it SHALL report that it was not found.
-
-#### Scenario: Confirm deletion
-- **WHEN** the user confirms deletion of a stored prompt
-- **THEN** the prompt is removed from the library
-- **THEN** the list, search, and direct open no longer return it
-
-#### Scenario: Cancel deletion
-- **WHEN** the user starts deletion and then cancels
-- **THEN** the prompt remains stored and unchanged
+## ADDED Requirements
 
 ### Requirement: Highlight the matched passage
 The system SHALL highlight search matches inside the stored text. A literal match SHALL highlight every occurrence of each matched piece in the text. When a piece matches only a grouped spelling, the system SHALL highlight the 气质词's text span instead of the grouped spelling. A 「意思相近」 match SHALL highlight only the highest-scoring section, or the text span of the highest-scoring keyword or 气质词. The system SHALL NOT add text in order to highlight a term that has no span in the stored text. Opening a prompt from a search result SHALL show the same highlights in the complete text. Opening a prompt without a search query SHALL NOT highlight the text.
