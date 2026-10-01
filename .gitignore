@@ -4,3 +4,11 @@ data/*.db-shm
 data/config.json
 /prompt-manager
 *.exe
+
+cloudflare/node_modules/
+cloudflare/.wrangler/
+cloudflare/dist/
+cloudflare/.dev.vars
+data/cloudflare-*.json
+data/cloudflare-*.sql
+cloudflare/worker-configuration.d.ts

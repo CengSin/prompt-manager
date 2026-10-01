@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"prompt-manager/internal/derive"
 	"prompt-manager/internal/prompt"
@@ -35,14 +36,15 @@ func NewHandler(st *store.Store) http.Handler {
 func New(st *store.Store, deriver Deriver) *App {
 	ctx, cancel := context.WithCancel(context.Background())
 	app := &App{
-		store:   st,
-		tmpl:    template.Must(template.ParseFS(templateFiles, "templates/*.html")),
-		deriver: deriver,
-		jobs:    make(chan job),
-		ctx:     ctx,
-		cancel:  cancel,
-		min:     0.35,
-		limit:   5,
+		store:         st,
+		tmpl:          template.Must(template.ParseFS(templateFiles, "templates/*.html")),
+		deriver:       deriver,
+		jobs:          make(chan job),
+		ctx:           ctx,
+		cancel:        cancel,
+		min:           0.35,
+		limit:         5,
+		shortQueryMin: derive.DefaultShortQuerySimilarity,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", app.list)
@@ -74,15 +76,17 @@ type job struct {
 }
 
 type App struct {
-	store   *store.Store
-	tmpl    *template.Template
-	deriver Deriver
-	jobs    chan job
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mux     *http.ServeMux
-	min     float64
-	limit   int
+	store         *store.Store
+	tmpl          *template.Template
+	deriver       Deriver
+	jobs          chan job
+	ctx           context.Context
+	cancel        context.CancelFunc
+	mux           *http.ServeMux
+	min           float64
+	limit         int
+	queryCache    queryCache
+	shortQueryMin float64
 }
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +121,18 @@ func (a *App) Backfill() {
 func (a *App) SetLimits(min float64, limit int) {
 	a.min = min
 	a.limit = limit
+}
+
+func (a *App) SetShortQueryMinimum(min float64) {
+	a.shortQueryMin = min
+}
+
+func (a *App) queryMinimum(query string) float64 {
+	length := utf8.RuneCountInString(strings.TrimSpace(query))
+	if length > 0 && length <= 4 && a.shortQueryMin > a.min {
+		return a.shortQueryMin
+	}
+	return a.min
 }
 
 func (a *App) loop() {
@@ -171,7 +187,9 @@ func (a *App) run(job job) {
 		return
 	}
 	if err := a.store.CommitDerived(job.id, job.gen, result); err != nil && !errors.Is(err, store.ErrStale) {
-		log.Printf("save derived data: %v", err)
+		reason := a.deriver.Redact(err.Error())
+		log.Printf("save derived data: %s", reason)
+		_ = a.store.MarkFailed(job.id, job.gen, reason)
 	}
 }
 
@@ -480,14 +498,27 @@ func (a *App) retryAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) match(ctx context.Context, query string) (store.Match, error) {
+	started := time.Now()
+	var embedDuration time.Duration
+	var cached bool
+	defer func() {
+		log.Printf("search: query_runes=%d embedding=%s cached=%t total=%s", utf8.RuneCountInString(strings.TrimSpace(query)), embedDuration.Round(time.Millisecond), cached, time.Since(started).Round(time.Millisecond))
+	}()
 	return a.store.Match(query, store.MatchConfig{
-		Min:   a.min,
+		Min:   a.queryMinimum(query),
 		Limit: a.limit,
 		Embed: func(text string) ([]float32, string, error) {
 			if a.deriver == nil || !a.deriver.EmbedReady() {
 				return nil, "", derive.ErrNotConfigured
 			}
-			return a.deriver.EmbedQuery(ctx, text)
+			started := time.Now()
+			values, model, hit, err := a.queryCache.embed(ctx, text, a.deriver.EmbedQuery)
+			embedDuration = time.Since(started)
+			cached = hit
+			if err != nil {
+				log.Printf("query embedding failed: %s", a.deriver.Redact(err.Error()))
+			}
+			return values, model, err
 		},
 	})
 }

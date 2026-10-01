@@ -17,24 +17,26 @@ import (
 )
 
 const (
-	defaultBase         = "https://openrouter.ai/api/v1"
-	defaultSimilarity   = 0.35
-	defaultMeaningLimit = 5
-	ConfigPath          = "./data/config.json"
+	defaultBase                 = "https://openrouter.ai/api/v1"
+	defaultSimilarity           = 0.35
+	defaultMeaningLimit         = 5
+	ConfigPath                  = "./data/config.json"
+	DefaultShortQuerySimilarity = 0.60
 )
 
 var ErrNotConfigured = errors.New("model is not configured")
 
 type Config struct {
-	TermBaseURL   string
-	TermKey       string
-	TermModel     string
-	EmbedBaseURL  string
-	EmbedAPIKey   string
-	EmbedModel    string
-	SimilarityMin float64
-	MeaningLimit  int
-	client        *http.Client
+	TermBaseURL             string
+	TermKey                 string
+	TermModel               string
+	EmbedBaseURL            string
+	EmbedAPIKey             string
+	EmbedModel              string
+	SimilarityMin           float64
+	ShortQuerySimilarityMin float64
+	MeaningLimit            int
+	client                  *http.Client
 }
 
 type endpointFile struct {
@@ -44,18 +46,20 @@ type endpointFile struct {
 }
 
 type fileDocument struct {
-	Term          endpointFile `json:"term"`
-	Embed         endpointFile `json:"embed"`
-	SimilarityMin *float64     `json:"similarityMin"`
-	MeaningLimit  *int         `json:"meaningLimit"`
+	Term                    endpointFile `json:"term"`
+	Embed                   endpointFile `json:"embed"`
+	SimilarityMin           *float64     `json:"similarityMin"`
+	ShortQuerySimilarityMin *float64     `json:"shortQuerySimilarityMin"`
+	MeaningLimit            *int         `json:"meaningLimit"`
 }
 
 func LoadFile(path string) Config {
 	cfg := Config{
-		TermBaseURL:   defaultBase,
-		EmbedBaseURL:  defaultBase,
-		SimilarityMin: defaultSimilarity,
-		MeaningLimit:  defaultMeaningLimit,
+		TermBaseURL:             defaultBase,
+		EmbedBaseURL:            defaultBase,
+		SimilarityMin:           defaultSimilarity,
+		ShortQuerySimilarityMin: DefaultShortQuerySimilarity,
+		MeaningLimit:            defaultMeaningLimit,
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -73,6 +77,9 @@ func LoadFile(path string) Config {
 	cfg.EmbedModel = strings.TrimSpace(doc.Embed.Model)
 	if doc.SimilarityMin != nil {
 		cfg.SimilarityMin = *doc.SimilarityMin
+	}
+	if doc.ShortQuerySimilarityMin != nil && *doc.ShortQuerySimilarityMin >= 0 && *doc.ShortQuerySimilarityMin <= 1 {
+		cfg.ShortQuerySimilarityMin = *doc.ShortQuerySimilarityMin
 	}
 	if doc.MeaningLimit != nil && *doc.MeaningLimit > 0 {
 		cfg.MeaningLimit = *doc.MeaningLimit

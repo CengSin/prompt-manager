@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"prompt-manager/internal/derive"
 	"prompt-manager/internal/prompt"
 	"prompt-manager/internal/search"
+	"prompt-manager/internal/vector"
 )
 
 var ErrStale = errors.New("stale derivation")
@@ -141,6 +143,13 @@ func (s *Store) CommitDerived(id string, generation int, result derive.Result) e
 		if current != generation {
 			return ErrStale
 		}
+		if s.vectors != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			if err := s.vectors.Replace(ctx, vector.Revision{ID: id, Generation: generation}, result.Vectors); err != nil {
+				return err
+			}
+		}
 		if err := deleteDerived(tx, id); err != nil {
 			return err
 		}
@@ -162,6 +171,9 @@ func (s *Store) CommitDerived(id string, generation int, result derive.Result) e
 			}
 		}
 		for _, vec := range result.Vectors {
+			if s.vectors != nil {
+				break
+			}
 			vecID, err := newID()
 			if err != nil {
 				return err
@@ -307,6 +319,30 @@ func (s *Store) Match(query string, cfg MatchConfig) (Match, error) {
 	for _, hit := range match.Literal {
 		literalIDs[hit.Prompt.ID] = struct{}{}
 	}
+	if s.vectors != nil {
+		var revisions []vector.Revision
+		byID := make(map[string]Prompt)
+		for _, item := range prompts {
+			byID[item.ID] = item
+			if _, exists := literalIDs[item.ID]; !exists && item.Status == StatusReady {
+				revisions = append(revisions, vector.Revision{ID: item.ID, Generation: item.Generation})
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		hits, err := s.vectors.Search(ctx, revisions, vec, model, cfg.Min, cfg.Limit)
+		if err != nil {
+			return match, nil
+		}
+		for _, hit := range hits {
+			item, ok := byID[hit.PromptID]
+			if !ok || item.Generation != hit.Generation || hit.Start < 0 || hit.End < hit.Start || hit.End > len(item.Body) {
+				continue
+			}
+			match.Meaning = append(match.Meaning, Hit{Prompt: item, Score: hit.Score, Spans: []prompt.Span{{Start: hit.Start, End: hit.End}}})
+		}
+		return match, nil
+	}
 	for _, hit := range attach(prompts, search.Meaning(docs, vec, model, cfg.Min, len(docs))) {
 		if _, exists := literalIDs[hit.Prompt.ID]; exists {
 			continue
@@ -391,6 +427,9 @@ func (s *Store) loadDocs() ([]search.Doc, []Prompt, error) {
 	}
 	if err := spellingRows.Err(); err != nil {
 		return nil, nil, err
+	}
+	if s.vectors != nil {
+		return docs, prompts, nil
 	}
 	vecRows, err := s.db.Query(`SELECT prompt_id, start, end, model, vector, generation FROM prompt_vectors`)
 	if err != nil {

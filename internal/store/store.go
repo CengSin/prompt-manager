@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"prompt-manager/internal/prompt"
+	"prompt-manager/internal/vector"
 
 	"crypto/rand"
 	_ "modernc.org/sqlite"
@@ -30,8 +32,9 @@ type Prompt struct {
 }
 
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	db      *sql.DB
+	now     func() time.Time
+	vectors vector.Backend
 }
 
 func Open(path string) (*Store, error) {
@@ -126,6 +129,13 @@ func (s *Store) Update(id, body, exampleURL string) (Prompt, error) {
 		return s.Get(id)
 	}
 	err = s.withTx(func(tx *sql.Tx) error {
+		if s.vectors != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if err := s.vectors.Delete(ctx, id); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(
 			`UPDATE prompts SET body = ?, body_search = ?, example_url = ?, updated_at = ?, derive_generation = ?, derive_status = 'none', derive_error = NULL, derive_failed_at = NULL WHERE id = ?`,
 			draft.Body, draft.BodySearch, nullableURL(draft), formatTime(s.now()), current.Generation+1, id,
@@ -142,6 +152,16 @@ func (s *Store) Update(id, body, exampleURL string) (Prompt, error) {
 
 func (s *Store) Delete(id string) error {
 	return s.withTx(func(tx *sql.Tx) error {
+		if _, err := generationOf(tx, id); err != nil {
+			return err
+		}
+		if s.vectors != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if err := s.vectors.Delete(ctx, id); err != nil {
+				return err
+			}
+		}
 		if err := deleteDerived(tx, id); err != nil {
 			return err
 		}

@@ -193,3 +193,22 @@ func TestLoadFileIgnoresEnvironment(t *testing.T) {
 		t.Fatalf("requests = %d", hits)
 	}
 }
+
+func TestLoadShortQueryMinimum(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		want      float64
+	}{
+		{"missing", `{}`, 0.60}, {"custom", `{"shortQuerySimilarityMin":0.65}`, 0.65}, {"zero", `{"shortQuerySimilarityMin":0}`, 0}, {"negative", `{"shortQuerySimilarityMin":-0.1}`, 0.60}, {"too high", `{"shortQuerySimilarityMin":1.1}`, 0.60},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(tc.raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if got := LoadFile(path).ShortQuerySimilarityMin; got != tc.want {
+				t.Fatalf("minimum=%v want=%v", got, tc.want)
+			}
+		})
+	}
+}
