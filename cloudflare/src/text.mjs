@@ -129,6 +129,11 @@ export function literalMatch(prompt, terms, query) {
   return {prompt, spans: mergeSpans(spans), score: 0};
 }
 
+export function addedOn(value) {
+  const formatted = new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date(value));
+  return `添加于 ${formatted}`;
+}
+
 export function queryMinimum(query, config) {
   const length = Array.from(query.trim()).length;
   const min = config.similarityMin ?? 0.35;

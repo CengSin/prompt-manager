@@ -22,6 +22,9 @@ import (
 //go:embed templates/*.html
 var templateFiles embed.FS
 
+//go:embed static/copy.js
+var copyScript []byte
+
 func ListenAddr(port string) string {
 	if port == "" {
 		port = "8787"
@@ -48,7 +51,10 @@ func New(st *store.Store, deriver Deriver) *App {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", app.list)
+	mux.HandleFunc("GET /copy.js", app.copyScript)
 	mux.HandleFunc("GET /prompts/new", app.newForm)
+	mux.HandleFunc("GET /prompts/draft", app.draftForm)
+	mux.HandleFunc("POST /prompts/draft", app.guard(app.createDraft))
 	mux.HandleFunc("POST /prompts", app.guard(app.create))
 	mux.HandleFunc("GET /prompts/failed", app.failed)
 	mux.HandleFunc("POST /prompts/failed/retry", app.guard(app.retryAll))
@@ -135,6 +141,101 @@ func (a *App) queryMinimum(query string) float64 {
 	return a.min
 }
 
+var beijingTime = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("CST", 8*60*60)
+	}
+	return loc
+}()
+
+func addedOn(at time.Time) string {
+	return "添加于 " + at.In(beijingTime).Format("2006-01-02")
+}
+
+func (a *App) listEntry(item store.Prompt, excerpt template.HTML) listItem {
+	return listItem{
+		ID:         item.ID,
+		Excerpt:    excerpt,
+		ExampleURL: item.ExampleURL,
+		Body:       item.Body,
+		Added:      addedOn(item.CreatedAt),
+	}
+}
+
+func (a *App) copyScript(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(copyScript)
+}
+
+type promptWriter interface {
+	DraftReady() bool
+	Draft(ctx context.Context, need string, samples []string) (string, error)
+}
+
+func (a *App) draftForm(w http.ResponseWriter, r *http.Request) {
+	a.render(w, http.StatusOK, "draft", draftPage{Title: "写一条"})
+}
+
+func (a *App) createDraft(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		a.fail(w, err)
+		return
+	}
+	need := r.PostFormValue("need")
+	if strings.TrimSpace(need) == "" {
+		a.render(w, http.StatusBadRequest, "draft", draftPage{Title: "写一条", Need: need, Error: "要写的内容必填"})
+		return
+	}
+	writer, ok := a.deriver.(promptWriter)
+	if !ok || !writer.DraftReady() {
+		a.render(w, http.StatusOK, "draft", draftPage{Title: "写一条", Need: need, Error: "还不能生成"})
+		return
+	}
+	samples := a.writingSamples(r.Context(), need)
+	text, err := writer.Draft(r.Context(), need, samples)
+	if err != nil || strings.TrimSpace(text) == "" {
+		if err != nil && a.deriver != nil {
+			log.Printf("draft failed: %s", a.deriver.Redact(err.Error()))
+		}
+		a.render(w, http.StatusBadGateway, "draft", draftPage{Title: "写一条", Need: need, Error: "没有生成出来"})
+		return
+	}
+	notice := "这是生成的草稿，改完再保存"
+	if len(samples) == 0 {
+		notice += "这次没有参考"
+	}
+	log.Printf("draft: runes=%d examples=%d", utf8.RuneCountInString(strings.TrimSpace(need)), len(samples))
+	a.render(w, http.StatusOK, "form", formPage{
+		Title:     "贴上提示词",
+		Action:    "/prompts",
+		Body:      text,
+		Notice:    notice,
+		CancelURL: "/",
+	})
+}
+
+func (a *App) writingSamples(ctx context.Context, need string) []string {
+	if a.deriver == nil || !a.deriver.EmbedReady() {
+		return nil
+	}
+	items, err := a.store.References(need, a.min, func(text string) ([]float32, string, error) {
+		values, model, _, err := a.queryCache.embed(ctx, text, a.deriver.EmbedQuery)
+		return values, model, err
+	})
+	if err != nil {
+		log.Printf("draft examples: %v", err)
+		return nil
+	}
+	samples := make([]string, 0, len(items))
+	for _, item := range items {
+		samples = append(samples, item.Body)
+	}
+	return samples
+}
+
 func (a *App) loop() {
 	for {
 		select {
@@ -197,6 +298,8 @@ type listItem struct {
 	ID         string
 	Excerpt    template.HTML
 	ExampleURL string
+	Body       string
+	Added      string
 }
 
 type listPage struct {
@@ -218,6 +321,14 @@ type formPage struct {
 	ExampleURL string
 	Error      string
 	CancelURL  string
+	Notice     string
+}
+
+type draftPage struct {
+	Title   string
+	Refresh int
+	Need    string
+	Error   string
 }
 
 type detailPage struct {
@@ -225,6 +336,7 @@ type detailPage struct {
 	Refresh    int
 	ID         string
 	Body       template.HTML
+	CopyBody   string
 	ExampleURL string
 }
 
@@ -272,11 +384,7 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, item := range items {
-			page.Prompts = append(page.Prompts, listItem{
-				ID:         item.ID,
-				Excerpt:    template.HTML(html.EscapeString(prompt.Excerpt(item.Body))),
-				ExampleURL: item.ExampleURL,
-			})
+			page.Prompts = append(page.Prompts, a.listEntry(item, template.HTML(html.EscapeString(prompt.Excerpt(item.Body)))))
 		}
 		page.Empty = len(items) == 0
 		a.render(w, http.StatusOK, "list", page)
@@ -288,18 +396,10 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, hit := range match.Literal {
-		page.Prompts = append(page.Prompts, listItem{
-			ID:         hit.Prompt.ID,
-			Excerpt:    excerptHTML(hit.Prompt.Body, hit.Spans),
-			ExampleURL: hit.Prompt.ExampleURL,
-		})
+		page.Prompts = append(page.Prompts, a.listEntry(hit.Prompt, excerptHTML(hit.Prompt.Body, hit.Spans)))
 	}
 	for _, hit := range match.Meaning {
-		page.Meaning = append(page.Meaning, listItem{
-			ID:         hit.Prompt.ID,
-			Excerpt:    excerptHTML(hit.Prompt.Body, hit.Spans),
-			ExampleURL: hit.Prompt.ExampleURL,
-		})
+		page.Meaning = append(page.Meaning, a.listEntry(hit.Prompt, excerptHTML(hit.Prompt.Body, hit.Spans)))
 	}
 	page.NoMatch = len(page.Prompts) == 0 && len(page.Meaning) == 0
 	a.render(w, http.StatusOK, "list", page)
@@ -359,6 +459,7 @@ func (a *App) detail(w http.ResponseWriter, r *http.Request) {
 		Title:      "提示词",
 		ID:         item.ID,
 		Body:       body,
+		CopyBody:   item.Body,
 		ExampleURL: item.ExampleURL,
 	})
 }

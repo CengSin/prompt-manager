@@ -78,15 +78,15 @@ The system SHALL show the complete stored text when the user opens a prompt, tog
 ### Requirement: Search the pasted text
 The system SHALL match a query that contains non-whitespace characters by splitting it on whitespace and ignoring empty pieces. A prompt SHALL be a literal match only when every piece occurs as a contiguous substring of that prompt's stored text, of one of its keywords, or of any spelling of one of its 气质词. Latin letters SHALL match regardless of case. Non-Latin text, including Chinese, SHALL match by exact substring. Search SHALL NOT use the example URL, user-managed categories, or user-managed tags as the match corpus. A query that is empty or only whitespace SHALL present the same list as the unfiltered library list. Literal matches SHALL keep the library list order.
 
-When no prompt is a literal match, the system SHALL embed the query as a whole and compare it with that prompt's section vectors, keyword vectors, and 气质词 vectors. The prompt's score SHALL be the highest of those similarities. The system SHALL show prompts whose score is at or above the configured minimum, at most the configured maximum, under the label 「意思相近」, ordered from highest score to lowest. The system SHALL NOT show 「意思相近」 when any literal match exists. When no literal match exists and no prompt both has vectors and reaches the minimum, the system SHALL show that nothing matched.
+For a non-empty query, when query embeddings are available, the system SHALL embed the query as a whole and compare it with each prompt's section vectors, keyword vectors, and 气质词 vectors, regardless of whether literal matches exist. A prompt's score SHALL be the highest of those similarities. The system SHALL show literal matches first, followed by prompts whose score is at or above the configured minimum under the label 「意思相近」, ordered from highest score to lowest. A prompt already shown as a literal match SHALL NOT also appear under 「意思相近」. The system SHALL apply the configured meaning-result cap after excluding literal matches. If query embeddings are unavailable or fail, the system SHALL still show literal matches. When no literal or eligible meaning match exists, the system SHALL show that nothing matched.
 
 #### Scenario: Match a Chinese substring
 - **WHEN** a stored prompt's text contains `剪纸` and the user searches for `剪纸`
-- **THEN** that prompt appears in the results
+- **THEN** that prompt appears in the literal results
 
 #### Scenario: Match Latin letters regardless of case
 - **WHEN** a stored prompt's text contains `Paper-cut` and the user searches for `paper-cut`
-- **THEN** that prompt appears in the results
+- **THEN** that prompt appears in the literal results
 
 #### Scenario: Match every space-separated piece
 - **WHEN** one stored prompt's text contains `垂直构图` and `海滩` in different places, another stored prompt's text contains only `海滩`, and the user searches for `垂直 海滩`
@@ -98,24 +98,36 @@ When no prompt is a literal match, the system SHALL embed the query as a whole a
 - **THEN** that prompt appears in the literal results
 
 #### Scenario: Do not match the example URL alone
-- **WHEN** the query occurs only in a prompt's example URL and does not occur in its text, keywords, or 气质词
+- **WHEN** the query occurs only in a prompt's example URL, does not occur in its text, keywords, or 气质词, and none of that prompt's vectors reaches the similarity minimum
 - **THEN** that prompt is absent from the results
 
 #### Scenario: Blank search lists the library
 - **WHEN** the user searches with an empty or whitespace-only query
 - **THEN** the system shows the same prompts in the same order as the unfiltered list
+- **THEN** the system does not request a query embedding
+
+#### Scenario: A Chinese description finds a foreign-language prompt
+- **WHEN** a user searches with a Chinese sentence describing a stored foreign-language prompt and that prompt's highest similarity reaches the configured minimum
+- **THEN** that prompt appears under 「意思相近」, including when another prompt matches the query literally
+- **THEN** its excerpt and detail page show spans from the stored original text
 
 #### Scenario: Literal matches leave out meaning matches
-- **WHEN** at least one prompt is a literal match
-- **THEN** the results do not include 「意思相近」
+- **WHEN** a prompt both matches literally and reaches the similarity minimum
+- **THEN** it appears only in the literal results
+- **THEN** eligible meaning matches for other prompts may still appear under 「意思相近」
 
 #### Scenario: Meaning matches fill an empty literal result
 - **WHEN** no prompt is a literal match, one prompt's best score is at or above the configured minimum, and another prompt's best score is below that minimum
 - **THEN** only the prompt at or above the minimum appears, under 「意思相近」
 
 #### Scenario: Higher meaning scores come first
-- **WHEN** no prompt is a literal match and two prompts both reach the configured minimum
-- **THEN** the prompt with the higher score appears before the prompt with the lower score
+- **WHEN** two eligible meaning matches have different scores
+- **THEN** the prompt with the higher score appears first under 「意思相近」
+
+#### Scenario: Query embedding failure preserves literal matches
+- **WHEN** a query has a literal match and the query embedding is unavailable or fails
+- **THEN** the literal match appears in the results
+- **THEN** no 「意思相近」 result is shown
 
 #### Scenario: No prompt matches
 - **WHEN** the user searches for a substring that no stored text, keyword, or 气质词 contains, and every prompt is either missing vectors or below the configured minimum
@@ -126,8 +138,8 @@ When no prompt is a literal match, the system SHALL embed the query as a whole a
 - **THEN** the system shows that nothing matched
 
 #### Scenario: Cap the meaning matches
-- **WHEN** no prompt is a literal match and more prompts reach the configured minimum than the configured maximum
-- **THEN** the system shows only as many 「意思相近」 prompts as the configured maximum, keeping the highest scores
+- **WHEN** literal results include a high-scoring prompt and more other prompts reach the configured minimum than the configured maximum
+- **THEN** the system shows only as many nonliteral 「意思相近」 prompts as the configured maximum, keeping the highest scores
 
 ### Requirement: Show prompt text literally
 The system SHALL present stored prompt text as literal text. Markup, scripts, and markdown in the text SHALL be visible as characters and SHALL NOT be executed or interpreted as page structure. A search highlight SHALL wrap characters that are already in the stored text and SHALL NOT cause those characters to be executed or interpreted as page structure.
@@ -191,3 +203,48 @@ The system SHALL highlight search matches inside the stored text. A literal matc
 #### Scenario: Opening from the library does not highlight
 - **WHEN** the user opens a stored prompt from the unfiltered library list
 - **THEN** the complete text has no search highlight
+
+### Requirement: Show when a prompt was added
+The system SHALL show the added date on every unfiltered list entry, every literal search result, and every 「意思相近」 result. The added date SHALL be the prompt's creation instant converted to Beijing time (UTC+8) and formatted `YYYY-MM-DD`, preceded by `添加于`. Correcting a prompt SHALL NOT change the shown date. The date SHALL NOT replace the excerpt or the example URL.
+
+#### Scenario: Evening UTC falls on the next Beijing date
+- **WHEN** a prompt was created at `2026-09-28T16:00:00Z`
+- **THEN** its list entry shows `添加于 2026-09-29`
+
+#### Scenario: Before 16:00 UTC stays on the same Beijing date
+- **WHEN** a prompt was created at `2026-09-28T15:59:59Z`
+- **THEN** its list entry shows `添加于 2026-09-28`
+
+#### Scenario: Correcting a prompt keeps the added date
+- **WHEN** the user corrects an older prompt's text or example URL
+- **THEN** that prompt's list entry still shows the date on which it was first saved
+
+#### Scenario: Search results show the added date
+- **WHEN** a prompt appears as a literal match or under 「意思相近」
+- **THEN** that entry shows the same added date as the unfiltered list
+
+### Requirement: Copy the stored prompt
+The system SHALL offer a control labeled `复制` on every unfiltered list entry, every literal search result, every 「意思相近」 result, and the detail page. Activating it SHALL place the complete stored text on the clipboard. The copied text SHALL be identical to the stored text, including line breaks, and SHALL NOT be only the excerpt. The copied text SHALL NOT include the example URL. Markup and scripts in the stored text SHALL be copied as characters and SHALL NOT be executed because the control is present. When the clipboard rejects the text, the control SHALL show `没复制成` and the stored prompt SHALL remain unchanged. After a successful copy, the control SHALL show `已复制`.
+
+#### Scenario: List copies more than the excerpt
+- **WHEN** the user activates `复制` on a list entry whose stored text is longer than its excerpt
+- **THEN** the copied text is the complete stored text
+- **THEN** the copied text does not include the example URL
+
+#### Scenario: Detail copies the stored text
+- **WHEN** the user activates `复制` on a stored prompt's detail page
+- **THEN** the copied text is identical to the stored text
+
+#### Scenario: A meaning result can be copied
+- **WHEN** the user activates `复制` on a 「意思相近」 entry
+- **THEN** the copied text is that prompt's complete stored text
+
+#### Scenario: Prompt markup stays literal
+- **WHEN** a stored prompt's text contains `<script>alert(1)</script></textarea>` and the page offers `复制`
+- **THEN** the list and the detail page show those characters as text
+- **THEN** the page does not execute the script
+
+#### Scenario: Clipboard rejection leaves the prompt unchanged
+- **WHEN** the user activates `复制` and the clipboard rejects the text
+- **THEN** the control shows `没复制成`
+- **THEN** the stored prompt is unchanged

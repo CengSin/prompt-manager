@@ -294,6 +294,58 @@ func (s *Store) ListUnprocessed() ([]Prompt, error) {
 	return s.query(`WHERE derive_status IN (?, ?)`, StatusNone, StatusPending)
 }
 
+const referenceLimit = 3
+
+func (s *Store) References(query string, min float64, embed EmbedFunc) ([]Prompt, error) {
+	if embed == nil {
+		return nil, nil
+	}
+	vec, model, err := embed(query)
+	if err != nil || len(vec) == 0 {
+		return nil, nil
+	}
+	docs, prompts, err := s.loadDocs()
+	if err != nil {
+		return nil, err
+	}
+	if s.vectors != nil {
+		revisions := make([]vector.Revision, 0, len(prompts))
+		byID := make(map[string]Prompt, len(prompts))
+		for _, item := range prompts {
+			byID[item.ID] = item
+			if item.Status == StatusReady {
+				revisions = append(revisions, vector.Revision{ID: item.ID, Generation: item.Generation})
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		hits, err := s.vectors.Search(ctx, revisions, vec, model, min, referenceLimit)
+		if err != nil {
+			return nil, nil
+		}
+		out := make([]Prompt, 0, referenceLimit)
+		for _, hit := range hits {
+			item, ok := byID[hit.PromptID]
+			if !ok || item.Generation != hit.Generation || hit.Start < 0 || hit.End < hit.Start || hit.End > len(item.Body) {
+				continue
+			}
+			out = append(out, item)
+			if len(out) == referenceLimit {
+				break
+			}
+		}
+		return out, nil
+	}
+	out := make([]Prompt, 0, referenceLimit)
+	for _, hit := range search.Meaning(docs, vec, model, min, referenceLimit) {
+		if hit.Index < 0 || hit.Index >= len(prompts) {
+			continue
+		}
+		out = append(out, prompts[hit.Index])
+	}
+	return out, nil
+}
+
 func (s *Store) Match(query string, cfg MatchConfig) (Match, error) {
 	docs, prompts, err := s.loadDocs()
 	if err != nil {

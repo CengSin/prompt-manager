@@ -10,14 +10,20 @@
 {{if .NoMatch}}<p class="empty">没有匹配的提示词</p>{{end}}
 {{range .Prompts}}
 <article>
+  <p>{{.Added}}</p>
   <a href="/prompts/{{.ID}}{{if $.Query}}?q={{urlquery $.Query}}{{end}}">{{.Excerpt}}</a>
+  <textarea id="copy-{{.ID}}" hidden readonly>{{.Body}}</textarea>
+  <button type="button" data-copy="copy-{{.ID}}">复制</button>
   {{if .ExampleURL}}<p><a href="{{.ExampleURL}}" target="_blank" rel="noopener noreferrer">{{.ExampleURL}}</a></p>{{end}}
 </article>
 {{end}}
 {{if .Meaning}}<h2>意思相近</h2>{{end}}
 {{range .Meaning}}
 <article>
+  <p>{{.Added}}</p>
   <a href="/prompts/{{.ID}}{{if $.Query}}?q={{urlquery $.Query}}{{end}}">{{.Excerpt}}</a>
+  <textarea id="copy-{{.ID}}" hidden readonly>{{.Body}}</textarea>
+  <button type="button" data-copy="copy-{{.ID}}">复制</button>
   {{if .ExampleURL}}<p><a href="{{.ExampleURL}}" target="_blank" rel="noopener noreferrer">{{.ExampleURL}}</a></p>{{end}}
 </article>
 {{end}}

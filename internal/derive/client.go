@@ -33,6 +33,9 @@ type Config struct {
 	EmbedBaseURL            string
 	EmbedAPIKey             string
 	EmbedModel              string
+	DraftBaseURL            string
+	DraftKey                string
+	DraftModel              string
 	SimilarityMin           float64
 	ShortQuerySimilarityMin float64
 	MeaningLimit            int
@@ -48,6 +51,7 @@ type endpointFile struct {
 type fileDocument struct {
 	Term                    endpointFile `json:"term"`
 	Embed                   endpointFile `json:"embed"`
+	Draft                   endpointFile `json:"draft"`
 	SimilarityMin           *float64     `json:"similarityMin"`
 	ShortQuerySimilarityMin *float64     `json:"shortQuerySimilarityMin"`
 	MeaningLimit            *int         `json:"meaningLimit"`
@@ -57,6 +61,7 @@ func LoadFile(path string) Config {
 	cfg := Config{
 		TermBaseURL:             defaultBase,
 		EmbedBaseURL:            defaultBase,
+		DraftBaseURL:            defaultBase,
 		SimilarityMin:           defaultSimilarity,
 		ShortQuerySimilarityMin: DefaultShortQuerySimilarity,
 		MeaningLimit:            defaultMeaningLimit,
@@ -75,6 +80,9 @@ func LoadFile(path string) Config {
 	cfg.EmbedBaseURL = baseOrDefault(doc.Embed.BaseURL)
 	cfg.EmbedAPIKey = strings.TrimSpace(doc.Embed.APIKey)
 	cfg.EmbedModel = strings.TrimSpace(doc.Embed.Model)
+	cfg.DraftBaseURL = baseOrDefault(doc.Draft.BaseURL)
+	cfg.DraftKey = strings.TrimSpace(doc.Draft.APIKey)
+	cfg.DraftModel = strings.TrimSpace(doc.Draft.Model)
 	if doc.SimilarityMin != nil {
 		cfg.SimilarityMin = *doc.SimilarityMin
 	}
@@ -103,12 +111,16 @@ func (c Config) EmbedReady() bool {
 	return c.EmbedBaseURL != "" && c.EmbedAPIKey != "" && c.EmbedModel != ""
 }
 
+func (c Config) DraftReady() bool {
+	return c.DraftBaseURL != "" && c.DraftKey != "" && c.DraftModel != ""
+}
+
 func (c Config) Ready() bool {
 	return c.TermsReady() && c.EmbedReady()
 }
 
 func (c Config) Redact(reason string) string {
-	for _, secret := range []string{c.TermKey, c.EmbedAPIKey} {
+	for _, secret := range []string{c.TermKey, c.EmbedAPIKey, c.DraftKey} {
 		if secret == "" {
 			continue
 		}
@@ -224,6 +236,66 @@ func (c Config) Extract(ctx context.Context, body string) ([]Term, error) {
 		return nil, err
 	}
 	return ParseTerms(body, parsed), nil
+}
+
+const draftSystem = "只输出一份提示词正文，不要解释，不要加标题。题材只来自用户这次要写的内容。已有提示词只示范写法、结构和语气，不要把它们的题材写进新提示词。用用户需求所用的语言来写。"
+
+func (c Config) Draft(ctx context.Context, need string, samples []string) (string, error) {
+	if !c.DraftReady() {
+		return "", ErrNotConfigured
+	}
+	payload, err := json.Marshal(map[string]any{
+		"model": c.DraftModel,
+		"messages": []map[string]string{
+			{"role": "system", "content": draftSystem},
+			{"role": "user", "content": draftUser(need, samples)},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	endpoint := strings.TrimRight(c.DraftBaseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.DraftKey)
+	res, err := c.httpClient().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	text, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return "", statusError("draft model", res.StatusCode, text)
+	}
+	parsed, err := completionText(text)
+	if err != nil {
+		return "", err
+	}
+	drafted := strings.TrimSpace(string(parsed))
+	if drafted == "" {
+		return "", errors.New("draft model returned no text")
+	}
+	return drafted, nil
+}
+
+func draftUser(need string, samples []string) string {
+	var b strings.Builder
+	b.WriteString("要写的内容：\n")
+	b.WriteString(need)
+	if len(samples) == 0 {
+		return b.String()
+	}
+	b.WriteString("\n\n写法范例：")
+	for i, sample := range samples {
+		fmt.Fprintf(&b, "\n\n范例 %d：\n%s", i+1, sample)
+	}
+	return b.String()
 }
 
 func (c Config) Embed(ctx context.Context, inputs []string) ([][]float32, error) {

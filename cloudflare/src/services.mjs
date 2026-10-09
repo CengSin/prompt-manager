@@ -2,14 +2,14 @@ import {byteSlice, literalMatch, queryMinimum} from './text.mjs';
 
 export function configuration(env) {
   const config = JSON.parse(env.APP_CONFIG || '{}');
-  for (const name of ['term', 'embed']) config[name] = {baseUrl: 'https://openrouter.ai/api/v1', ...config[name]};
+  for (const name of ['term', 'embed', 'draft']) config[name] = {baseUrl: 'https://openrouter.ai/api/v1', ...config[name]};
   config.astra = {keyspace: 'default_keyspace', collection: 'prompt_vectors_cloudflare', ...config.astra};
   return config;
 }
 
 export function redact(error, config) {
   let text = String(error?.message || error);
-  for (const secret of [config.term?.apiKey, config.embed?.apiKey, config.astra?.applicationToken]) if (secret) text = text.replaceAll(secret, '[redacted]');
+  for (const secret of [config.term?.apiKey, config.embed?.apiKey, config.draft?.apiKey, config.astra?.applicationToken]) if (secret) text = text.replaceAll(secret, '[redacted]');
   return text.slice(0, 500);
 }
 
@@ -39,6 +39,37 @@ export async function modelRequest(endpoint, path, payload) {
     method: 'POST', headers: {'Authorization': `Bearer ${endpoint.apiKey}`, 'Content-Type': 'application/json'},
     body: JSON.stringify({...payload, model: endpoint.model}), signal: AbortSignal.timeout(60000), redirect: 'manual'
   }));
+}
+
+const draftSystem = '只输出一份提示词正文，不要解释，不要加标题。题材只来自用户这次要写的内容。已有提示词只示范写法、结构和语气，不要把它们的题材写进新提示词。用用户需求所用的语言来写。';
+
+export function draftMessages(need, samples) {
+  let user = `要写的内容：\n${need}`;
+  if (samples.length) {
+    user += '\n\n写法范例：';
+    samples.forEach((sample, index) => { user += `\n\n范例 ${index + 1}：\n${sample}`; });
+  }
+  return [{role: 'system', content: draftSystem}, {role: 'user', content: user}];
+}
+
+export async function draftPrompt(config, need, samples) {
+  const response = await modelRequest(config.draft, '/chat/completions', {messages: draftMessages(need, samples)});
+  const text = String(response.choices?.[0]?.message?.content || '').trim();
+  if (!text) throw new Error('没有生成出来');
+  return text;
+}
+
+export async function writingExamples(env, config, need) {
+  if (!config.embed?.apiKey || !config.embed?.model) return [];
+  const prompts = (await env.DB.prepare("SELECT * FROM prompts WHERE derive_status = 'ready'").all()).results;
+  if (!prompts.length) return [];
+  try {
+    const embedded = await queryEmbedding(env, config, need);
+    return (await meaningSearch(config, prompts, embedded.vector, config.similarityMin ?? 0.35, 3)).map(hit => hit.prompt);
+  } catch (error) {
+    console.error(JSON.stringify({event: 'draft_examples_failed', error: redact(error, config)}));
+    return [];
+  }
 }
 
 export async function embed(config, inputs) {

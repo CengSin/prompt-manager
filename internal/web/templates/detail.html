@@ -1,10 +1,12 @@
 {{define "detail"}}{{template "top" .}}
 <pre class="body">{{.Body}}</pre>
+<textarea id="copy-{{.ID}}" hidden readonly>{{.CopyBody}}</textarea>
 {{if .ExampleURL}}
 <p>当初的作品</p>
 <p><a href="{{.ExampleURL}}" target="_blank" rel="noopener noreferrer">{{.ExampleURL}}</a></p>
 {{end}}
 <div class="actions">
+  <button type="button" data-copy="copy-{{.ID}}">复制</button>
   <a href="/prompts/{{.ID}}/edit">改正</a>
   <a href="/prompts/{{.ID}}/delete">删除</a>
 </div>

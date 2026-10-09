@@ -62,6 +62,12 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+func (s *Store) SetNow(now func() time.Time) {
+	if now != nil {
+		s.now = now
+	}
+}
+
 func (s *Store) Create(body, exampleURL string) (Prompt, error) {
 	draft, err := prompt.Validate(body, exampleURL)
 	if err != nil {

@@ -1,10 +1,11 @@
+import {copyScript} from './copy.js';
 import {style} from './style.mjs';
-import {escapeHTML, excerptHTML, markHTML, validateDraft} from './text.mjs';
-import {configuration, deleteVectors, match, redact} from './services.mjs';
+import {addedOn, escapeHTML, excerptHTML, markHTML, validateDraft} from './text.mjs';
+import {configuration, deleteVectors, draftPrompt, match, redact, writingExamples} from './services.mjs';
 
 function page(title, content, refresh = false, status = 200) {
-  return new Response(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${refresh ? '<meta http-equiv="refresh" content="3">' : ''}<link rel="icon" href="data:,"><title>${escapeHTML(title)}</title><style>${style}</style></head><body><header><h1><a href="/">提示词</a></h1><a href="/prompts/new">贴上一条</a></header><main>${content}</main></body></html>`, {
-    status, headers: {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"}
+  return new Response(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${refresh ? '<meta http-equiv="refresh" content="3">' : ''}<link rel="icon" href="data:,"><title>${escapeHTML(title)}</title><style>${style}</style></head><body><header><h1><a href="/">提示词</a></h1><nav><a href="/prompts/draft">写一条</a><a href="/prompts/new">贴上一条</a></nav></header><main>${content}</main><script src="/copy.js"></script></body></html>`, {
+    status, headers: {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"}
   });
 }
 
@@ -12,15 +13,24 @@ function redirect(path) {
   return new Response(null, {status: 303, headers: {Location: path, 'Cache-Control': 'no-store'}});
 }
 
-function form(prompt = {}, error = '') {
+function form(prompt = {}, error = '', notice = '') {
   const action = prompt.id ? `/prompts/${prompt.id}` : '/prompts';
-  return page(prompt.id ? '改正' : '贴上一条', `<form class="editor" method="post" action="${action}">${error ? `<p class="error">${escapeHTML(error)}</p>` : ''}<label>原文<textarea name="body">${escapeHTML(prompt.body || '')}</textarea></label><label>示例链接<input name="example_url" value="${escapeHTML(prompt.example_url || '')}"></label><div class="actions"><button type="submit">保存</button>${prompt.id ? `<a href="/prompts/${prompt.id}">取消</a>` : ''}</div></form>`);
+  return page(prompt.id ? '改正' : '贴上一条', `<form class="editor" method="post" action="${action}">${notice ? `<p>${escapeHTML(notice)}</p>` : ''}${error ? `<p class="error">${escapeHTML(error)}</p>` : ''}<label>原文<textarea name="body">${escapeHTML(prompt.body || '')}</textarea></label><label>示例链接<input name="example_url" value="${escapeHTML(prompt.example_url || '')}"></label><div class="actions"><button type="submit">保存</button>${prompt.id ? `<a href="/prompts/${prompt.id}">取消</a>` : ''}</div></form>`);
+}
+
+function draftPage(need = '', error = '') {
+  return page('写一条', `<form class="editor" method="post" action="/prompts/draft">${error ? `<p class="error">${escapeHTML(error)}</p>` : ''}<label>要写的内容<textarea name="need">${escapeHTML(need)}</textarea></label><div class="actions"><button type="submit">生成</button></div></form>`);
+}
+
+function copySource(prompt) {
+  const id = `copy-${prompt.id}`;
+  return `<textarea id="${escapeHTML(id)}" hidden readonly>${escapeHTML(prompt.body)}</textarea><button type="button" data-copy="${escapeHTML(id)}">复制</button>`;
 }
 
 function article(hit, query = '') {
   const prompt = hit.prompt;
   const suffix = query ? '?q=' + encodeURIComponent(query) : '';
-  return `<article><a href="/prompts/${prompt.id}${suffix}">${excerptHTML(prompt.body, hit.spans)}</a>${prompt.example_url ? `<p><a href="${escapeHTML(prompt.example_url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(prompt.example_url)}</a></p>` : ''}</article>`;
+  return `<article><p>${addedOn(prompt.created_at)}</p><a href="/prompts/${prompt.id}${suffix}">${excerptHTML(prompt.body, hit.spans)}</a>${copySource(prompt)}${prompt.example_url ? `<p><a href="${escapeHTML(prompt.example_url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(prompt.example_url)}</a></p>` : ''}</article>`;
 }
 
 export function ready(config) {
@@ -47,7 +57,7 @@ function clearDerived(env, id) {
   ];
 }
 
-async function readForm(request) {
+async function readParams(request) {
   const reader = request.body?.getReader();
   const chunks = [];
   let length = 0;
@@ -66,10 +76,12 @@ async function readForm(request) {
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
   const text = new TextDecoder().decode(bytes);
-  const values = new URLSearchParams(text);
-  const body = values.get('body') || '';
-  const example = values.get('example_url') || '';
-  return {body, example_url: example};
+  return new URLSearchParams(text);
+}
+
+async function readForm(request) {
+  const values = await readParams(request);
+  return {body: values.get('body') || '', example_url: values.get('example_url') || ''};
 }
 
 export async function handle(request, env) {
@@ -85,6 +97,7 @@ export async function handle(request, env) {
   }
   if (!['GET', 'HEAD', 'POST'].includes(request.method)) return new Response('Method not allowed', {status: 405});
   if (path === '/healthz') return Response.json({ok: true});
+  if (path === '/copy.js' && request.method !== 'POST') return new Response(copyScript, {headers: {'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}});
   if (path === '/' && request.method !== 'POST') {
     const query = url.searchParams.get('q') || '';
     const result = await match(env, config, query);
@@ -93,6 +106,23 @@ export async function handle(request, env) {
     return page('提示词', content);
   }
   if (path === '/prompts/new' && request.method !== 'POST') return form();
+  if (path === '/prompts/draft' && request.method !== 'POST') return draftPage();
+  if (path === '/prompts/draft' && request.method === 'POST') {
+    const values = await readParams(request);
+    const need = values.get('need') || '';
+    if (!need.trim()) return draftPage(need, '要写的内容必填');
+    if (!config.draft?.apiKey || !config.draft?.model) return draftPage(need, '还不能生成');
+    const samples = await writingExamples(env, config, need);
+    let text;
+    try {
+      text = await draftPrompt(config, need, samples.map(item => item.body));
+    } catch (error) {
+      console.error(JSON.stringify({event: 'draft_failed', error: redact(error, config)}));
+      return draftPage(need, '没有生成出来');
+    }
+    console.log(JSON.stringify({event: 'draft', runes: Array.from(need.trim()).length, examples: samples.length}));
+    return form({body: text}, '', `这是生成的草稿，改完再保存${samples.length ? '' : '这次没有参考'}`);
+  }
   if (path === '/prompts' && request.method === 'POST') {
     const values = await readForm(request);
     let draft;
@@ -153,5 +183,5 @@ export async function handle(request, env) {
     const hit = [...result.literal, ...result.meaning].find(hit => hit.prompt.id === id);
     if (hit) rendered = markHTML(prompt.body, hit.spans);
   }
-  return page('提示词', `<pre class="body">${rendered}</pre>${prompt.example_url ? `<p>当初的作品</p><p><a href="${escapeHTML(prompt.example_url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(prompt.example_url)}</a></p>` : ''}<div class="actions"><a href="/prompts/${id}/edit">改正</a><a href="/prompts/${id}/delete">删除</a></div>`);
+  return page('提示词', `<pre class="body">${rendered}</pre>${copySource(prompt)}${prompt.example_url ? `<p>当初的作品</p><p><a href="${escapeHTML(prompt.example_url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(prompt.example_url)}</a></p>` : ''}<div class="actions"><a href="/prompts/${id}/edit">改正</a><a href="/prompts/${id}/delete">删除</a></div>`);
 }

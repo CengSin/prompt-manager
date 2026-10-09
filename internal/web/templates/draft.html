@@ -1,0 +1,12 @@
+{{define "draft"}}{{template "top" .}}
+<form class="editor" method="post" action="/prompts/draft">
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <label>要写的内容
+    <textarea name="need">{{.Need}}</textarea>
+  </label>
+  <div class="actions">
+    <button type="submit">生成</button>
+    <a href="/">取消</a>
+  </div>
+</form>
+{{template "bottom" .}}{{end}}

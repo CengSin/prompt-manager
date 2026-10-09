@@ -18,12 +18,13 @@ PORT=8787 PROMPT_MANAGER_DB=./data/prompts.db go run ./cmd/prompt-manager
 
 `PROMPT_MANAGER_DB` 是数据库文件路径。`PORT` 是端口。进程只监听 `127.0.0.1`。
 
-抽词和嵌入的模型写在 `./data/config.json`。这个文件不从环境变量读取，里面有 API key，不要提交进仓库。`baseUrl` 留空时用 `https://openrouter.ai/api/v1`。`apiKey` 和 `model` 需要自己填。某一边缺 `apiKey` 或 `model` 时，那一边不发请求。
+抽词、嵌入和写提示词的模型写在 `./data/config.json`。这个文件不从环境变量读取，里面有 API key，不要提交进仓库。`baseUrl` 留空时用 `https://openrouter.ai/api/v1`。`apiKey` 和 `model` 需要自己填。某一边缺 `apiKey` 或 `model` 时，那一边不发请求。`draft` 缺 `apiKey` 或 `model` 时不生成。
 
 ```json
 {
   "term": { "baseUrl": "", "apiKey": "", "model": "" },
   "embed": { "baseUrl": "", "apiKey": "", "model": "" },
+  "draft": { "baseUrl": "", "apiKey": "", "model": "" },
   "astra": {
     "apiEndpoint": "https://DATABASE_ID-REGION.apps.astra.datastax.com",
     "applicationToken": "",
@@ -36,7 +37,7 @@ PORT=8787 PROMPT_MANAGER_DB=./data/prompts.db go run ./cmd/prompt-manager
 }
 ```
 
-`term` 是抽词，`embed` 是嵌入。`similarityMin` 是意思相近的最低分，`meaningLimit` 是最多显示几条。
+`term` 是抽词，`embed` 是嵌入，`draft` 是按这次要写的内容生成提示词。`similarityMin` 是意思相近的最低分，`meaningLimit` 是最多显示几条。
 
 去掉首尾空白后，长度不超过 4 个 Unicode 字符的非空查询使用更严格的语义门槛：`similarityMin` 和 `shortQuerySimilarityMin` 中的较大值。`shortQuerySimilarityMin` 默认是 0.60，可以在本地配置中调整。更长的查询继续使用 `similarityMin`。这个规则只过滤语义结果，字面匹配不受影响；列表页和详情页使用相同规则。
 

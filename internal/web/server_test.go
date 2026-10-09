@@ -288,7 +288,7 @@ func TestLiteralTextAndNoFetch(t *testing.T) {
 	_, found := getPath(t, client, ts.URL+"/?q=alert")
 	assertLiteral(t, detail)
 	assertLiteral(t, list)
-	if strings.Contains(strings.ToLower(found), "<script") || !strings.Contains(found, "&lt;script&gt;") || !strings.Contains(found, "&lt;/script&gt;") || !strings.Contains(found, "<mark>alert</mark>") {
+	if strings.Contains(strings.ToLower(withoutCopyScript(found)), "<script") || !strings.Contains(found, "&lt;script&gt;") || !strings.Contains(found, "&lt;/script&gt;") || !strings.Contains(found, "<mark>alert</mark>") {
 		t.Fatalf("highlighted script was not literal: %s", found)
 	}
 	if hits.Load() != 0 {
@@ -348,7 +348,13 @@ func TestSearchHighlightAndMeaning(t *testing.T) {
 	}
 
 	_, listed := getPath(t, client, ts.URL+"/?q="+url.QueryEscape("海滩"))
-	if !strings.Contains(listed, "意思相近") || strings.Contains(listed, strings.Repeat("甲", 200)) || !strings.Contains(listed, "<mark>海滩</mark>") {
+	anchorStart := strings.Index(listed, `<a href="/prompts/`+beach.ID)
+	anchorEnd := strings.Index(listed[anchorStart:], "</a>")
+	anchor := ""
+	if anchorStart >= 0 && anchorEnd >= 0 {
+		anchor = listed[anchorStart : anchorStart+anchorEnd]
+	}
+	if !strings.Contains(listed, "意思相近") || strings.Contains(anchor, strings.Repeat("甲", 200)) || !strings.Contains(anchor, "<mark>海滩</mark>") || !strings.Contains(copyField(t, listed, beach.ID), strings.Repeat("甲", 200)) {
 		t.Fatalf("beach list: %s", listed)
 	}
 	if !strings.Contains(listed, "/prompts/"+beach.ID+"?q=") {
@@ -738,9 +744,13 @@ func TestBackfillSkipsFailures(t *testing.T) {
 	})
 }
 
+func withoutCopyScript(page string) string {
+	return strings.ReplaceAll(page, `<script src="/copy.js"></script>`, "")
+}
+
 func assertLiteral(t *testing.T, page string) {
 	t.Helper()
-	if strings.Contains(strings.ToLower(page), "<script") {
+	if strings.Contains(strings.ToLower(withoutCopyScript(page)), "<script") {
 		t.Fatalf("executable script in page: %s", page)
 	}
 	if !strings.Contains(page, "&lt;script&gt;alert(1)&lt;/script&gt;") {

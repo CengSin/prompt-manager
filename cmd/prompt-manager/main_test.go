@@ -39,12 +39,12 @@ func TestReadmeDocumentsModelConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	for _, needle := range []string{"./data/config.json", "baseUrl", "apiKey", "model", "similarityMin", "meaningLimit"} {
+	for _, needle := range []string{"./data/config.json", "baseUrl", "apiKey", "model", "similarityMin", "meaningLimit", "draft", "不生成"} {
 		if !strings.Contains(body, needle) {
 			t.Fatalf("readme missing %s", needle)
 		}
 	}
-	for _, banned := range []string{"XAI_API_KEY", "PROMPT_MANAGER_DERIVE_MODEL", "PROMPT_MANAGER_EMBED_API_KEY"} {
+	for _, banned := range []string{"XAI_API_KEY", "PROMPT_MANAGER_DERIVE_MODEL", "PROMPT_MANAGER_EMBED_API_KEY", "PROMPT_MANAGER_DRAFT"} {
 		if strings.Contains(body, banned) {
 			t.Fatalf("readme contains %s", banned)
 		}

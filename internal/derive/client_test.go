@@ -2,6 +2,7 @@ package derive
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -191,6 +192,112 @@ func TestLoadFileIgnoresEnvironment(t *testing.T) {
 	}
 	if hits != 0 {
 		t.Fatalf("requests = %d", hits)
+	}
+}
+
+func TestLoadDraftConfig(t *testing.T) {
+	t.Setenv("PROMPT_MANAGER_DRAFT_API_KEY", "env-draft")
+	t.Setenv("PROMPT_MANAGER_DRAFT_MODEL", "env-model")
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	missing := LoadFile(filepath.Join(t.TempDir(), "missing.json"))
+	missing.client = server.Client()
+	if missing.DraftReady() || missing.DraftBaseURL != defaultBase || missing.DraftKey != "" || missing.DraftModel != "" {
+		t.Fatalf("env configured draft %#v", missing)
+	}
+	if _, err := missing.Draft(context.Background(), "春节厨房", nil); err != ErrNotConfigured {
+		t.Fatalf("missing draft err = %v", err)
+	}
+
+	emptyBase := filepath.Join(t.TempDir(), "empty-base.json")
+	if err := os.WriteFile(emptyBase, []byte(`{"draft":{"apiKey":"draft-key","model":"vendor/draft"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	custom := filepath.Join(t.TempDir(), "custom.json")
+	if err := os.WriteFile(custom, []byte(`{"draft":{"baseUrl":"`+server.URL+`","apiKey":"draft-key","model":"vendor/draft"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	noModel := filepath.Join(t.TempDir(), "no-model.json")
+	if err := os.WriteFile(noModel, []byte(`{"draft":{"baseUrl":"`+server.URL+`","apiKey":"draft-key"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadFile(emptyBase); got.DraftBaseURL != defaultBase || !got.DraftReady() {
+		t.Fatalf("empty base = %#v", got)
+	}
+	if got := LoadFile(noModel); got.DraftReady() {
+		t.Fatal("draft ready without model")
+	}
+	bare := LoadFile(noModel)
+	bare.client = server.Client()
+	if _, err := bare.Draft(context.Background(), "春节厨房", nil); err != ErrNotConfigured {
+		t.Fatalf("no model err = %v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("requests = %d", hits)
+	}
+	if got := LoadFile(custom); got.DraftBaseURL != server.URL || got.DraftKey != "draft-key" || got.DraftModel != "vendor/draft" || !got.DraftReady() {
+		t.Fatalf("custom draft = %#v", got)
+	}
+}
+
+func TestDraftWritesPrompt(t *testing.T) {
+	var hits int
+	var path, body, auth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		path = r.URL.Path
+		auth = r.Header.Get("Authorization")
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
+		content := "  \n剪纸风格的春节厨房\n镜头从门口推进  "
+		if strings.Contains(body, "空白需求") {
+			content = "  \n  "
+		}
+		if strings.Contains(body, "泄露密钥") {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":"draft-key is invalid"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"choices":[{"message":{"content":%q}}]}`, content)
+	}))
+	defer server.Close()
+	cfg := Config{
+		DraftBaseURL: server.URL,
+		DraftKey:     "draft-key",
+		DraftModel:   "vendor/draft",
+		client:       server.Client(),
+	}
+	got, err := cfg.Draft(context.Background(), "春节厨房，剪纸风格", []string{"纪录片原文"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "剪纸风格的春节厨房\n镜头从门口推进" {
+		t.Fatalf("draft = %q", got)
+	}
+	if hits != 1 || path != "/chat/completions" || auth != "Bearer draft-key" {
+		t.Fatalf("hits=%d path=%s auth=%s", hits, path, auth)
+	}
+	if !strings.Contains(body, "要写的内容：") || !strings.Contains(body, "春节厨房，剪纸风格") || !strings.Contains(body, "写法范例：") || !strings.Contains(body, "纪录片原文") {
+		t.Fatalf("request = %s", body)
+	}
+	if !strings.Contains(body, "题材只来自用户这次要写的内容") || strings.Contains(body, "https://") {
+		t.Fatalf("request mixed subject and url = %s", body)
+	}
+	if _, err := cfg.Draft(context.Background(), "空白需求", nil); err == nil {
+		t.Fatal("blank draft succeeded")
+	}
+	_, err = cfg.Draft(context.Background(), "泄露密钥", nil)
+	if err == nil || !strings.Contains(err.Error(), "draft-key") {
+		t.Fatalf("status err = %v", err)
+	}
+	if redacted := cfg.Redact(err.Error()); strings.Contains(redacted, "draft-key") {
+		t.Fatalf("redacted = %s", redacted)
 	}
 }
 
