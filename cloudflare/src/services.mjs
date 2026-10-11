@@ -101,10 +101,32 @@ export async function queryEmbedding(env, config, query) {
 export async function astraRequest(config, command, collection = true) {
   const astra = config.astra;
   if (!astra.apiEndpoint || !astra.applicationToken) throw new Error('Astra DB 未配置');
-  const endpoint = astra.apiEndpoint.replace(/\/$/, '') + '/api/json/v1/' + encodeURIComponent(astra.keyspace) + (collection ? '/' + encodeURIComponent(astra.collection) : '');
+  const collectionName = typeof collection === 'string' ? collection : astra.collection;
+  const endpoint = astra.apiEndpoint.replace(/\/$/, '') + '/api/json/v1/' + encodeURIComponent(astra.keyspace) + (collection ? '/' + encodeURIComponent(collectionName) : '');
   const response = await responseJSON(await fetch(endpoint, {method: 'POST', headers: {'Token': astra.applicationToken, 'Content-Type': 'application/json'}, body: JSON.stringify(command), signal: AbortSignal.timeout(30000), redirect: 'manual'}));
   if (response.errors?.length) throw new Error(`Astra Data API: ${response.errors.map(error => error.errorCode).join(', ')}`);
   return response;
+}
+
+const keepaliveCollection = 'keepalive';
+const keepaliveID = '__keepalive__';
+
+export async function keepAstraAwake(config) {
+  if (!config.astra?.apiEndpoint || !config.astra?.applicationToken) return;
+  const listed = await astraRequest(config, {findCollections: {options: {explain: true}}}, false);
+  const found = (listed.status?.collections || []).find(item => item?.name === keepaliveCollection);
+  let dimension = found?.options?.vector?.dimension;
+  if (!Number.isInteger(dimension) || dimension < 1) {
+    dimension = 2;
+    await astraRequest(config, {createCollection: {name: keepaliveCollection, options: {vector: {dimension, metric: 'cosine'}}}}, false);
+  }
+  const values = Array(dimension).fill(0);
+  values[0] = 1;
+  const document = {_id: keepaliveID, $vector: values};
+  await astraRequest(config, {deleteOne: {filter: {_id: keepaliveID}}}, keepaliveCollection);
+  await astraRequest(config, {insertOne: {document}}, keepaliveCollection);
+  await astraRequest(config, {deleteOne: {filter: {_id: keepaliveID}}}, keepaliveCollection);
+  console.log(JSON.stringify({event: 'astra_keepalive', dimension}));
 }
 
 export async function deleteVectors(config, filter) {

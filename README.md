@@ -70,6 +70,8 @@ go run ./cmd/prompt-manager -migrate-vectors
 
 保存原文后，`prompt-manager-derive` Workflow 在后台提取词语、分批生成嵌入并写入 Astra，完成后将当前正文版本标记为 ready。失败记录可在网页中重跑。云端查询嵌入缓存存储在 D1，保留 15 分钟、最多 256 个查询；短查询使用相同的 0.60 阈值。
 
+Astra 免费库超过 48 小时没有读写会被临时关闭，下一次写入向量会失败。Worker 每小时整点执行一次保活：在独立集合 `keepalive` 里写入一条二维向量 `[1, 0]`，然后按 `_id` 删掉。这条记录不进入提示词集合，搜索也读不到它。若上次删除没有成功，下一次会先清掉同名残留再写入。Astra 未配置时这次保活直接跳过。定时任务写在 `cloudflare/wrangler.jsonc`，部署后才开始运行。
+
 配置与凭据：
 
 - `cloudflare/wrangler.jsonc` 保存 Worker、D1、Workflow 和自定义域名配置。

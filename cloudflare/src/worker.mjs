@@ -1,6 +1,6 @@
 import {WorkflowEntrypoint} from 'cloudflare:workers';
 import {handle} from './app.mjs';
-import {configuration, embed, modelRequest, redact, writeVectors, deleteVectors} from './services.mjs';
+import {configuration, embed, modelRequest, redact, writeVectors, deleteVectors, keepAstraAwake} from './services.mjs';
 import {sections, parseTerms} from './text.mjs';
 
 export class PromptDerivation extends WorkflowEntrypoint {
@@ -62,6 +62,14 @@ export default {
     catch (error) {
       console.error(JSON.stringify({event: 'request_failed', error: redact(error, configuration(env))}));
       return new Response('处理失败，请稍后重试。', {status: 500, headers: {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store'}});
+    }
+  },
+  async scheduled(_event, env) {
+    const config = configuration(env);
+    try { await keepAstraAwake(config); }
+    catch (error) {
+      console.error(JSON.stringify({event: 'astra_keepalive_failed', error: redact(error, config)}));
+      throw error;
     }
   }
 };

@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {handle} from '../src/app.mjs';
 import {sections, findAll, markHTML, parseTerms, queryMinimum, literalMatch, addedOn} from '../src/text.mjs';
-import {embed, meaningSearch, writeVectors, modelRequest, configuration, redact, writingExamples} from '../src/services.mjs';
+import {embed, meaningSearch, writeVectors, modelRequest, configuration, redact, writingExamples, keepAstraAwake} from '../src/services.mjs';
 
 class D1 {
   constructor() { this.db = new DatabaseSync(':memory:'); this.db.exec(readFileSync(new URL('../schema.sql', import.meta.url), 'utf8')); }
@@ -108,6 +108,38 @@ test('workflow vector batches keep absolute indexes and use idempotent upserts',
     await writeVectors(config, {id: 'p', derive_generation: 2}, [{source: 'term', start: 0, end: 3, index: 8, values: [1, 0]}, {source: 'term', start: 0, end: 3, index: 9, values: [1, 0]}]);
     assert.deepEqual(ids, ['p:2:8', 'p:2:9']);
   });
+});
+
+test('hourly keepalive writes one small vector and then deletes it', async () => {
+  const calls = [];
+  await withFetch(async (url, options) => {
+    const command = JSON.parse(options.body);
+    const name = Object.keys(command)[0];
+    calls.push({name, url: String(url), command});
+    assert.equal(options.headers.Token, 'test-token');
+    if (name === 'findCollections') return response({status: {collections: [{name: 'prompt_vectors_cloudflare', options: {vector: {dimension: 4096, metric: 'cosine'}}}]}});
+    return response({status: {deletedCount: name === 'deleteOne' ? 0 : 1}});
+  }, async () => { await keepAstraAwake(config); });
+  assert.deepEqual(calls.map(call => call.name), ['findCollections', 'createCollection', 'deleteOne', 'insertOne', 'deleteOne']);
+  assert.equal(calls[1].url.endsWith('/api/json/v1/default_keyspace'), true);
+  assert.deepEqual(calls[1].command.createCollection, {name: 'keepalive', options: {vector: {dimension: 2, metric: 'cosine'}}});
+  assert.equal(calls[3].url.endsWith('/keepalive'), true);
+  assert.deepEqual(calls[3].command.insertOne.document, {_id: '__keepalive__', $vector: [1, 0]});
+  assert.deepEqual(calls[2].command.deleteOne.filter, {_id: '__keepalive__'});
+  assert.deepEqual(calls[4].command.deleteOne.filter, {_id: '__keepalive__'});
+});
+
+test('keepalive skips an unconfigured database and an existing collection', async () => {
+  let calls = 0;
+  await withFetch(async () => { calls++; return response({}); }, async () => { await keepAstraAwake({astra: {}}); });
+  assert.equal(calls, 0);
+  const names = [];
+  await withFetch(async (_url, options) => {
+    const command = JSON.parse(options.body);
+    names.push(Object.keys(command)[0]);
+    return response({status: {collections: [{name: 'keepalive', options: {vector: {dimension: 2, metric: 'cosine'}}}], deletedCount: 1}});
+  }, async () => { await keepAstraAwake(config); });
+  assert.deepEqual(names, ['findCollections', 'deleteOne', 'insertOne', 'deleteOne']);
 });
 
 test('embeddings reject duplicated indexes instead of assigning vectors to the wrong text', async () => {

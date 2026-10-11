@@ -17,6 +17,9 @@
       "database_id": "58504f51-4bf5-42c6-9f93-881c0ba808e3"
     }
   ],
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
   "workflows": [
     {
       "binding": "DERIVE_WORKFLOW",
