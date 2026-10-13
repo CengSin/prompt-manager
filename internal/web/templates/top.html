@@ -7,83 +7,167 @@
 <link rel="icon" href="data:,">
 <title>{{.Title}}</title>
 <style>
+:root {
+  --paper: #f3f0ea;
+  --ink: #1c1917;
+  --stone: #78716c;
+  --line: #e4dfd6;
+  --field: #fffcf7;
+  --edge: #d8d2c8;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
 body {
-  margin: 0;
-  background: #f6f5f3;
-  color: #1f1d1a;
-  font: 17px/1.55 ui-sans-serif, system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font: 17px/1.65 "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 header, main {
-  width: min(40rem, calc(100% - 2.5rem));
+  width: min(40rem, calc(100% - 3rem));
   margin: 0 auto;
 }
 header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: baseline;
-  padding: 1.5rem 0 0.5rem;
+  gap: 1.25rem;
+  padding-top: 4.5rem;
 }
-header a {
+main { padding-bottom: 5rem; }
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  min-width: 0;
+}
+.brand h1 {
+  margin: 0;
+  font-family: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+  font-size: 1.85rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.brand h1 a {
   color: inherit;
   text-decoration: none;
 }
-header nav {
+.count {
+  color: var(--stone);
+  font-size: 0.82rem;
+}
+nav {
   display: flex;
-  gap: 1rem;
+  align-items: center;
+  gap: 1.15rem;
+  flex: none;
 }
-h1 {
-  margin: 0;
-  font-size: 1.35rem;
-  font-weight: 600;
+nav a.quiet {
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 0.95rem;
 }
-main {
-  padding-bottom: 4rem;
+nav a.quiet:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
 }
-form.search, form.editor, form.confirm {
+nav a.go {
+  color: #fff;
+  background: var(--ink);
+  text-decoration: none;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0.62rem 0.9rem;
+  border-radius: 6px;
+}
+nav a.go:hover { background: #292524; }
+nav a.go:active { transform: scale(0.98); }
+form.search { margin: 2.6rem 0 0; }
+form.editor, form.confirm {
   display: grid;
   gap: 0.75rem;
 }
-form.search {
-  grid-template-columns: 1fr auto;
-  align-items: end;
-  margin: 1rem 0 1.5rem;
+form.search label {
+  display: block;
+  margin: 0 0 0.4rem;
+  color: var(--stone);
+  font-size: 0.82rem;
 }
 label {
   display: grid;
   gap: 0.35rem;
   font-size: 0.9rem;
 }
-input, textarea, button {
-  font: inherit;
-}
+input, textarea, button { font: inherit; }
 input, textarea {
   width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #d6d3d1;
-  border-radius: 0.4rem;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
   background: #fff;
-  padding: 0.55rem 0.7rem;
+  padding: 0.7rem 0.85rem;
 }
+.field {
+  display: flex;
+  align-items: stretch;
+  background: var(--field);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+}
+.field:focus-within { border-color: #b7b0a4; }
+.field input {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  background: transparent;
+  padding: 0.85rem 1rem;
+  border-radius: 8px 0 0 8px;
+}
+.field input:focus { outline: none; }
+input::placeholder { color: #a8a29e; }
 textarea, pre.body {
   font: 15px/1.6 ui-monospace, "SFMono-Regular", "Source Han Mono", monospace;
   white-space: pre-wrap;
   word-break: break-word;
 }
-textarea {
-  min-height: 18rem;
-}
+textarea { min-height: 18rem; }
 button, .actions a {
-  border-radius: 0.4rem;
+  border-radius: 6px;
   padding: 0.45rem 0.8rem;
 }
 button {
   border: 0;
-  background: #1f1d1a;
+  background: var(--ink);
   color: #fff;
   cursor: pointer;
 }
-a {
-  color: #1d4ed8;
+button:hover { background: #292524; }
+button:active { transform: scale(0.98); }
+button.search {
+  flex: none;
+  border: 0;
+  border-left: 1px solid var(--edge);
+  background: transparent;
+  color: var(--ink);
+  padding: 0 1.15rem;
+  border-radius: 0 8px 8px 0;
+}
+button.search:hover { background: #f7f3ec; }
+button.copy {
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1;
+  padding: 0.38rem 0.62rem;
+}
+button.copy:hover { background: var(--field); }
+a { color: inherit; }
+p a {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
 }
 .actions {
   display: flex;
@@ -91,42 +175,78 @@ a {
   align-items: center;
   margin-top: 1.25rem;
 }
+.actions a { color: var(--ink); text-decoration: none; }
+.actions a:hover { text-decoration: underline; text-underline-offset: 0.18em; }
 article {
-  padding: 0.9rem 0;
-  border-top: 1px solid #e7e5e4;
+  padding: 1.45rem 0 1.3rem;
+  border-top: 1px solid var(--line);
 }
-article p {
-  margin: 0.35rem 0 0;
+article p { margin: 0.35rem 0 0; overflow-wrap: anywhere; }
+time {
+  display: block;
+  margin: 0 0 0.4rem;
+  color: var(--stone);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+a.excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  line-height: 1.7;
   overflow-wrap: anywhere;
 }
-.empty {
-  color: #57534e;
+a.excerpt:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+  text-decoration-thickness: 1px;
 }
-mark {
-  background: #f3e3b0;
-  color: inherit;
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 0.8rem;
 }
+a.work {
+  color: var(--stone);
+  font-size: 0.82rem;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+a.work:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.empty { color: var(--stone); }
+mark { background: #f3e3b0; color: inherit; }
 h2 {
-  margin: 1.4rem 0 0.4rem;
-  font-size: 1rem;
+  margin: 1.6rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--stone);
 }
+.error { color: #9f1239; margin: 0; }
 @media (max-width: 40rem) {
-  form.search {
-    grid-template-columns: 1fr;
-  }
-}
-.error {
-  color: #9f1239;
-  margin: 0;
+  header, main { width: min(40rem, calc(100% - 2rem)); }
+  header { padding-top: 2.4rem; }
+  .brand h1 { font-size: 1.55rem; }
+  nav { gap: 0.85rem; }
 }
 </style>
 </head>
 <body>
 <header>
-  <h1><a href="/">提示词</a></h1>
+  <div class="brand">
+    <h1><a href="/">提示词</a></h1>
+    {{if .ShowCount}}<span class="count">{{.Count}} 条</span>{{end}}
+  </div>
   <nav>
-    <a href="/prompts/draft">写一条</a>
-    <a href="/prompts/new">贴上一条</a>
+    <a class="quiet" href="/prompts/new">贴上一条</a>
+    <a class="go" href="/prompts/draft">写一条</a>
   </nav>
 </header>
 <main>

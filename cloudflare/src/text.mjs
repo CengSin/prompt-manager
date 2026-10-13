@@ -140,6 +140,20 @@ export function queryMinimum(query, config) {
   return length > 0 && length <= 4 ? Math.max(min, config.shortQuerySimilarityMin ?? 0.60) : min;
 }
 
+export function exampleLabel(raw = '') {
+  let url;
+  try { url = new URL(String(raw).trim()); } catch { return raw; }
+  if (!url.hostname) return raw;
+  const host = url.hostname.toLowerCase().replace(/^www\./, '');
+  const segment = url.pathname.split('/').filter(Boolean)[0] || '';
+  if (host === 'x.com' || host === 'twitter.com' || host === 'mobile.twitter.com') {
+    if (segment && segment !== 'i' && segment.toLowerCase() !== 'status') return `x.com/${segment}`;
+    return 'x.com';
+  }
+  const path = url.pathname.replace(/^\/|\/$/g, '');
+  return path ? `${host}/${path}` : host;
+}
+
 export function validateDraft(body, exampleURL) {
   if (!body.trim()) throw new Error('原文必填');
   const example = exampleURL.trim();

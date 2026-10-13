@@ -53,7 +53,7 @@ func TestCopyAndAddedDate(t *testing.T) {
 	client := ts.Client()
 
 	_, list := getPath(t, client, ts.URL+"/")
-	if !strings.Contains(list, "写一条") || !strings.Contains(list, "添加于 2026-09-29") || !strings.Contains(list, "添加于 2026-09-28") {
+	if !strings.Contains(list, "写一条") || !strings.Contains(list, "添加于 2026-09-29") || !strings.Contains(list, "添加于 2026-09-28") || !strings.Contains(list, `class="count">3 条`) || !strings.Contains(list, `placeholder="原文、一个词，或一句意思"`) || !strings.Contains(list, `>example.com/keep-out</a>`) || !strings.Contains(list, `href="https://example.com/keep-out"`) {
 		t.Fatalf("list dates: %s", list)
 	}
 	field := copyField(t, list, late.ID)
@@ -89,6 +89,21 @@ func TestCopyAndAddedDate(t *testing.T) {
 	_, corrected := getPath(t, client, ts.URL+"/")
 	if !strings.Contains(corrected, "添加于 2026-09-29") || !strings.Contains(corrected, "改正后的海滩全文") {
 		t.Fatalf("corrected list: %s", corrected)
+	}
+}
+
+func TestExampleLabel(t *testing.T) {
+	cases := []struct{ raw, want string }{
+		{"https://x.com/riku720720/status/2102515055116063144", "x.com/riku720720"},
+		{"https://twitter.com/ohmuyi/status/1?s=20", "x.com/ohmuyi"},
+		{"https://example.com/keep-out", "example.com/keep-out"},
+		{"https://example.com", "example.com"},
+		{"not a url", "not a url"},
+	}
+	for _, tc := range cases {
+		if got := exampleLabel(tc.raw); got != tc.want {
+			t.Errorf("exampleLabel(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
 	}
 }
 

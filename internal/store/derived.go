@@ -278,6 +278,12 @@ func (s *Store) ListFailed() ([]Failure, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) Count() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM prompts`).Scan(&n)
+	return n, err
+}
+
 func (s *Store) CountFailed() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM prompts WHERE derive_status = ?`, StatusFailed).Scan(&n)

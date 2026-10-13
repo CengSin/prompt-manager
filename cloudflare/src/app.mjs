@@ -1,10 +1,11 @@
 import {copyScript} from './copy.js';
 import {style} from './style.mjs';
-import {addedOn, escapeHTML, excerptHTML, markHTML, validateDraft} from './text.mjs';
+import {addedOn, escapeHTML, exampleLabel, excerptHTML, markHTML, validateDraft} from './text.mjs';
 import {configuration, deleteVectors, draftPrompt, match, redact, writingExamples} from './services.mjs';
 
-function page(title, content, refresh = false, status = 200) {
-  return new Response(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${refresh ? '<meta http-equiv="refresh" content="3">' : ''}<link rel="icon" href="data:,"><title>${escapeHTML(title)}</title><style>${style}</style></head><body><header><h1><a href="/">提示词</a></h1><nav><a href="/prompts/draft">写一条</a><a href="/prompts/new">贴上一条</a></nav></header><main>${content}</main><script src="/copy.js"></script></body></html>`, {
+function page(title, content, refresh = false, status = 200, count = null) {
+  const total = Number.isInteger(count) ? `<span class="count">${count} 条</span>` : '';
+  return new Response(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${refresh ? '<meta http-equiv="refresh" content="3">' : ''}<link rel="icon" href="data:,"><title>${escapeHTML(title)}</title><style>${style}</style></head><body><header><div class="brand"><h1><a href="/">提示词</a></h1>${total}</div><nav><a class="quiet" href="/prompts/new">贴上一条</a><a class="go" href="/prompts/draft">写一条</a></nav></header><main>${content}</main><script src="/copy.js"></script></body></html>`, {
     status, headers: {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"}
   });
 }
@@ -30,7 +31,9 @@ function copySource(prompt) {
 function article(hit, query = '') {
   const prompt = hit.prompt;
   const suffix = query ? '?q=' + encodeURIComponent(query) : '';
-  return `<article><p>${addedOn(prompt.created_at)}</p><a href="/prompts/${prompt.id}${suffix}">${excerptHTML(prompt.body, hit.spans)}</a>${copySource(prompt)}${prompt.example_url ? `<p><a href="${escapeHTML(prompt.example_url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(prompt.example_url)}</a></p>` : ''}</article>`;
+  const id = `copy-${prompt.id}`;
+  const work = prompt.example_url ? `<a class="work" href="${escapeHTML(prompt.example_url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(exampleLabel(prompt.example_url))}</a>` : '';
+  return `<article><time>${addedOn(prompt.created_at)}</time><a class="excerpt" href="/prompts/${prompt.id}${suffix}">${excerptHTML(prompt.body, hit.spans)}</a><textarea id="${escapeHTML(id)}" hidden readonly>${escapeHTML(prompt.body)}</textarea><div class="meta"><button class="copy" type="button" data-copy="${escapeHTML(id)}">复制</button>${work}</div></article>`;
 }
 
 export function ready(config) {
@@ -102,8 +105,9 @@ export async function handle(request, env) {
     const query = url.searchParams.get('q') || '';
     const result = await match(env, config, query);
     const failed = await env.DB.prepare("SELECT COUNT(*) AS n FROM prompts WHERE derive_status = 'failed'").first();
-    const content = `<form class="search" method="get" action="/"><label>搜索<input id="q" name="q" value="${escapeHTML(query)}"></label><button type="submit">搜索</button></form>${failed.n ? `<p><a href="/prompts/failed">${failed.n} 条处理失败</a></p>` : ''}${!result.literal.length && !result.meaning.length ? `<p class="empty">${query.trim() ? '没有匹配的提示词' : '还没有提示词'}</p>` : ''}${result.literal.map(hit => article(hit, query)).join('')}${result.meaning.length ? '<h2>意思相近</h2>' : ''}${result.meaning.map(hit => article(hit, query)).join('')}`;
-    return page('提示词', content);
+    const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM prompts').first();
+    const content = `<form class="search" method="get" action="/"><label for="q">搜索</label><div class="field"><input id="q" name="q" value="${escapeHTML(query)}" placeholder="原文、一个词，或一句意思"><button class="search" type="submit">搜索</button></div></form>${failed.n ? `<p><a href="/prompts/failed">${failed.n} 条处理失败</a></p>` : ''}${!result.literal.length && !result.meaning.length ? `<p class="empty">${query.trim() ? '没有匹配的提示词' : '还没有提示词'}</p>` : ''}${result.literal.map(hit => article(hit, query)).join('')}${result.meaning.length ? '<h2>意思相近</h2>' : ''}${result.meaning.map(hit => article(hit, query)).join('')}`;
+    return page('提示词', content, false, 200, Number(total.n));
   }
   if (path === '/prompts/new' && request.method !== 'POST') return form();
   if (path === '/prompts/draft' && request.method !== 'POST') return draftPage();

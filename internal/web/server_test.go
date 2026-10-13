@@ -348,8 +348,11 @@ func TestSearchHighlightAndMeaning(t *testing.T) {
 	}
 
 	_, listed := getPath(t, client, ts.URL+"/?q="+url.QueryEscape("海滩"))
-	anchorStart := strings.Index(listed, `<a href="/prompts/`+beach.ID)
-	anchorEnd := strings.Index(listed[anchorStart:], "</a>")
+	anchorStart := strings.Index(listed, `href="/prompts/`+beach.ID)
+	anchorEnd := -1
+	if anchorStart >= 0 {
+		anchorEnd = strings.Index(listed[anchorStart:], "</a>")
+	}
 	anchor := ""
 	if anchorStart >= 0 && anchorEnd >= 0 {
 		anchor = listed[anchorStart : anchorStart+anchorEnd]

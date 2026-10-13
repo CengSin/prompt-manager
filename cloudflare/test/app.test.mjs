@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {handle} from '../src/app.mjs';
-import {sections, findAll, markHTML, parseTerms, queryMinimum, literalMatch, addedOn} from '../src/text.mjs';
+import {sections, findAll, markHTML, parseTerms, queryMinimum, literalMatch, addedOn, exampleLabel} from '../src/text.mjs';
 import {embed, meaningSearch, writeVectors, modelRequest, configuration, redact, writingExamples, keepAstraAwake} from '../src/services.mjs';
 
 class D1 {
@@ -267,6 +267,12 @@ test('pages copy the stored prompt and show the Beijing date', async () => {
     assert.equal(html.includes('添加于 2026-09-29'), true);
     assert.equal(html.includes('添加于 2026-09-28'), true);
     assert.equal(html.includes('写一条'), true);
+    assert.equal(html.includes('class="count">3 条'), true);
+    assert.equal(html.includes('placeholder="原文、一个词，或一句意思"'), true);
+    assert.equal(html.includes('>example.com/keep-out</a>'), true);
+    assert.equal(html.includes('href="https://example.com/keep-out"'), true);
+    assert.equal(exampleLabel('https://x.com/riku720720/status/2102515055116063144'), 'x.com/riku720720');
+    assert.equal(exampleLabel('https://twitter.com/ohmuyi/status/1?s=20'), 'x.com/ohmuyi');
     const field = html.slice(html.indexOf(`<textarea id="copy-${late}" hidden readonly>`), html.indexOf('</textarea>', html.indexOf(`copy-${late}`)));
     assert.equal(field.includes('海'.repeat(130)), true);
     assert.equal(field.includes('&lt;script&gt;alert(1)&lt;/script&gt;&lt;/textarea&gt;'), true);

@@ -153,13 +153,36 @@ func addedOn(at time.Time) string {
 	return "添加于 " + at.In(beijingTime).Format("2006-01-02")
 }
 
+func exampleLabel(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" {
+		return raw
+	}
+	host := strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
+	segment := ""
+	if path := strings.Trim(parsed.EscapedPath(), "/"); path != "" {
+		segment, _, _ = strings.Cut(path, "/")
+	}
+	if host == "x.com" || host == "twitter.com" || host == "mobile.twitter.com" {
+		if segment != "" && segment != "i" && !strings.EqualFold(segment, "status") {
+			return "x.com/" + segment
+		}
+		return "x.com"
+	}
+	if segment == "" {
+		return host
+	}
+	return host + "/" + strings.Trim(parsed.EscapedPath(), "/")
+}
+
 func (a *App) listEntry(item store.Prompt, excerpt template.HTML) listItem {
 	return listItem{
-		ID:         item.ID,
-		Excerpt:    excerpt,
-		ExampleURL: item.ExampleURL,
-		Body:       item.Body,
-		Added:      addedOn(item.CreatedAt),
+		ID:           item.ID,
+		Excerpt:      excerpt,
+		ExampleURL:   item.ExampleURL,
+		ExampleLabel: exampleLabel(item.ExampleURL),
+		Body:         item.Body,
+		Added:        addedOn(item.CreatedAt),
 	}
 }
 
@@ -295,16 +318,19 @@ func (a *App) run(job job) {
 }
 
 type listItem struct {
-	ID         string
-	Excerpt    template.HTML
-	ExampleURL string
-	Body       string
-	Added      string
+	ID           string
+	Excerpt      template.HTML
+	ExampleURL   string
+	ExampleLabel string
+	Body         string
+	Added        string
 }
 
 type listPage struct {
 	Title       string
 	Refresh     int
+	ShowCount   bool
+	Count       int
 	Query       string
 	Prompts     []listItem
 	Meaning     []listItem
@@ -316,6 +342,8 @@ type listPage struct {
 type formPage struct {
 	Title      string
 	Refresh    int
+	ShowCount  bool
+	Count      int
 	Action     string
 	Body       string
 	ExampleURL string
@@ -325,15 +353,19 @@ type formPage struct {
 }
 
 type draftPage struct {
-	Title   string
-	Refresh int
-	Need    string
-	Error   string
+	Title     string
+	Refresh   int
+	ShowCount bool
+	Count     int
+	Need      string
+	Error     string
 }
 
 type detailPage struct {
 	Title      string
 	Refresh    int
+	ShowCount  bool
+	Count      int
 	ID         string
 	Body       template.HTML
 	CopyBody   string
@@ -348,24 +380,30 @@ type failedItem struct {
 }
 
 type failedPage struct {
-	Title   string
-	Refresh int
-	Empty   bool
-	Working bool
-	Items   []failedItem
+	Title     string
+	Refresh   int
+	ShowCount bool
+	Count     int
+	Empty     bool
+	Working   bool
+	Items     []failedItem
 }
 
 type deletePage struct {
-	Title   string
-	Refresh int
-	ID      string
-	Excerpt string
+	Title     string
+	Refresh   int
+	ShowCount bool
+	Count     int
+	ID        string
+	Excerpt   string
 }
 
 type messagePage struct {
-	Title   string
-	Refresh int
-	Message string
+	Title     string
+	Refresh   int
+	ShowCount bool
+	Count     int
+	Message   string
 }
 
 func (a *App) list(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +415,12 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
+	page.Count, err = a.store.Count()
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	page.ShowCount = true
 	if strings.TrimSpace(query) == "" {
 		items, err := a.store.List()
 		if err != nil {

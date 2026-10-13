@@ -1,1 +1,229 @@
-export const style = "body {\n  margin: 0;\n  background: #f6f5f3;\n  color: #1f1d1a;\n  font: 17px/1.55 ui-sans-serif, system-ui, \"PingFang SC\", \"Noto Sans SC\", sans-serif;\n}\nheader, main {\n  width: min(40rem, calc(100% - 2.5rem));\n  margin: 0 auto;\n}\nheader {\n  display: flex;\n  justify-content: space-between;\n  align-items: baseline;\n  padding: 1.5rem 0 0.5rem;\n}\nheader a {\n  color: inherit;\n  text-decoration: none;\n}\nheader nav {\n  display: flex;\n  gap: 1rem;\n}\nh1 {\n  margin: 0;\n  font-size: 1.35rem;\n  font-weight: 600;\n}\nmain {\n  padding-bottom: 4rem;\n}\nform.search, form.editor, form.confirm {\n  display: grid;\n  gap: 0.75rem;\n}\nform.search {\n  grid-template-columns: 1fr auto;\n  align-items: end;\n  margin: 1rem 0 1.5rem;\n}\nlabel {\n  display: grid;\n  gap: 0.35rem;\n  font-size: 0.9rem;\n}\ninput, textarea, button {\n  font: inherit;\n}\ninput, textarea {\n  width: 100%;\n  box-sizing: border-box;\n  border: 1px solid #d6d3d1;\n  border-radius: 0.4rem;\n  background: #fff;\n  padding: 0.55rem 0.7rem;\n}\ntextarea, pre.body {\n  font: 15px/1.6 ui-monospace, \"SFMono-Regular\", \"Source Han Mono\", monospace;\n  white-space: pre-wrap;\n  word-break: break-word;\n}\ntextarea {\n  min-height: 18rem;\n}\nbutton, .actions a {\n  border-radius: 0.4rem;\n  padding: 0.45rem 0.8rem;\n}\nbutton {\n  border: 0;\n  background: #1f1d1a;\n  color: #fff;\n  cursor: pointer;\n}\na {\n  color: #1d4ed8;\n}\n.actions {\n  display: flex;\n  gap: 0.8rem;\n  align-items: center;\n  margin-top: 1.25rem;\n}\narticle {\n  padding: 0.9rem 0;\n  border-top: 1px solid #e7e5e4;\n}\narticle p {\n  margin: 0.35rem 0 0;\n  overflow-wrap: anywhere;\n}\n.empty {\n  color: #57534e;\n}\nmark {\n  background: #f3e3b0;\n  color: inherit;\n}\nh2 {\n  margin: 1.4rem 0 0.4rem;\n  font-size: 1rem;\n}\n@media (max-width: 40rem) {\n  form.search {\n    grid-template-columns: 1fr;\n  }\n}\n.error {\n  color: #9f1239;\n  margin: 0;\n}";
+export const style = `:root {
+  --paper: #f3f0ea;
+  --ink: #1c1917;
+  --stone: #78716c;
+  --line: #e4dfd6;
+  --field: #fffcf7;
+  --edge: #d8d2c8;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 17px/1.65 "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+header, main {
+  width: min(40rem, calc(100% - 3rem));
+  margin: 0 auto;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding-top: 4.5rem;
+}
+main { padding-bottom: 5rem; }
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  min-width: 0;
+}
+.brand h1 {
+  margin: 0;
+  font-family: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+  font-size: 1.85rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.brand h1 a {
+  color: inherit;
+  text-decoration: none;
+}
+.count {
+  color: var(--stone);
+  font-size: 0.82rem;
+}
+nav {
+  display: flex;
+  align-items: center;
+  gap: 1.15rem;
+  flex: none;
+}
+nav a.quiet {
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+nav a.quiet:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
+}
+nav a.go {
+  color: #fff;
+  background: var(--ink);
+  text-decoration: none;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0.62rem 0.9rem;
+  border-radius: 6px;
+}
+nav a.go:hover { background: #292524; }
+nav a.go:active { transform: scale(0.98); }
+form.search { margin: 2.6rem 0 0; }
+form.editor, form.confirm {
+  display: grid;
+  gap: 0.75rem;
+}
+form.search label {
+  display: block;
+  margin: 0 0 0.4rem;
+  color: var(--stone);
+  font-size: 0.82rem;
+}
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+input, textarea, button { font: inherit; }
+input, textarea {
+  width: 100%;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.7rem 0.85rem;
+}
+.field {
+  display: flex;
+  align-items: stretch;
+  background: var(--field);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+}
+.field:focus-within { border-color: #b7b0a4; }
+.field input {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  background: transparent;
+  padding: 0.85rem 1rem;
+  border-radius: 8px 0 0 8px;
+}
+.field input:focus { outline: none; }
+input::placeholder { color: #a8a29e; }
+textarea, pre.body {
+  font: 15px/1.6 ui-monospace, "SFMono-Regular", "Source Han Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+textarea { min-height: 18rem; }
+button, .actions a {
+  border-radius: 6px;
+  padding: 0.45rem 0.8rem;
+}
+button {
+  border: 0;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+}
+button:hover { background: #292524; }
+button:active { transform: scale(0.98); }
+button.search {
+  flex: none;
+  border: 0;
+  border-left: 1px solid var(--edge);
+  background: transparent;
+  color: var(--ink);
+  padding: 0 1.15rem;
+  border-radius: 0 8px 8px 0;
+}
+button.search:hover { background: #f7f3ec; }
+button.copy {
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1;
+  padding: 0.38rem 0.62rem;
+}
+button.copy:hover { background: var(--field); }
+a { color: inherit; }
+p a {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.actions {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  margin-top: 1.25rem;
+}
+.actions a { color: var(--ink); text-decoration: none; }
+.actions a:hover { text-decoration: underline; text-underline-offset: 0.18em; }
+article {
+  padding: 1.45rem 0 1.3rem;
+  border-top: 1px solid var(--line);
+}
+article p { margin: 0.35rem 0 0; overflow-wrap: anywhere; }
+time {
+  display: block;
+  margin: 0 0 0.4rem;
+  color: var(--stone);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+a.excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+a.excerpt:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+  text-decoration-thickness: 1px;
+}
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 0.8rem;
+}
+a.work {
+  color: var(--stone);
+  font-size: 0.82rem;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+a.work:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.empty { color: var(--stone); }
+mark { background: #f3e3b0; color: inherit; }
+h2 {
+  margin: 1.6rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--stone);
+}
+.error { color: #9f1239; margin: 0; }
+@media (max-width: 40rem) {
+  header, main { width: min(40rem, calc(100% - 2rem)); }
+  header { padding-top: 2.4rem; }
+  .brand h1 { font-size: 1.55rem; }
+  nav { gap: 0.85rem; }
+}`;
